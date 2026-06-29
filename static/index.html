@@ -6,90 +6,368 @@
   <title>数据库文章选择</title>
   <style>
     :root {
-      --bg: #f4f6f8;
-      --panel: #fff;
-      --line: #d7dde5;
+      --primary: #0f5f75;
+      --primary-dark: #0f3d4a;
+      --accent: #f2b84b;
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --border: #d8e1ea;
       --text: #1f2937;
-      --muted: #64748b;
-      --brand: #176b87;
-      --bad: #b91c1c;
+      --muted: #6b7280;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --warning: #d97706;
+      --info: #2563eb;
+      --shadow: 0 10px 24px rgba(15, 23, 42, .07);
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
-    header { background: #12343f; color: #fff; padding: 20px 28px; border-bottom: 4px solid #e4b363; }
-    header h1 { margin: 0; font-size: 22px; }
-    main { padding: 18px; max-width: 1600px; margin: 0 auto; }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 20px rgba(15,23,42,.06); margin-bottom: 16px; }
-    .panel h2 { margin: 0; padding: 13px 15px; font-size: 16px; border-bottom: 1px solid var(--line); }
-    .panel-body { padding: 15px; }
-    .grid { display: grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap: 12px; }
-    label { display: block; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
-    input, select { width: 100%; border: 1px solid #b8c2d2; border-radius: 6px; padding: 9px 10px; font: inherit; background: #fff; }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
-    button { border: 0; border-radius: 6px; padding: 10px 14px; font-weight: 700; cursor: pointer; min-height: 38px; }
-    button.primary { background: var(--brand); color: #fff; }
-    button.secondary { background: #e2e8f0; color: #1e293b; }
-    .status { color: var(--muted); font-size: 13px; min-height: 20px; }
-    .status.error { color: var(--bad); }
-    .table-wrap { overflow: auto; max-height: 560px; border-top: 1px solid var(--line); }
-    table { width: 100%; min-width: 1450px; border-collapse: collapse; font-size: 12px; }
-    th, td { border-bottom: 1px solid #e5e7eb; padding: 8px 9px; text-align: left; vertical-align: top; }
-    th { background: #f8fafc; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
-    .preview { max-width: 360px; color: #475569; }
-    .pager { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .json { margin: 0; white-space: pre-wrap; word-break: break-word; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; max-height: 260px; overflow: auto; font-size: 12px; }
-    @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } main { padding: 12px; } }
+    html, body { width: 100%; overflow-x: hidden; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      padding: 0 28px;
+      background: linear-gradient(135deg, var(--primary-dark), #062b36);
+      color: #fff;
+      border-bottom: 3px solid var(--accent);
+      box-shadow: 0 4px 14px rgba(15, 61, 74, .22);
+    }
+    .topbar h1 {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+    main {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 52px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+    .card-title {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f2530;
+    }
+    .card-body { padding: 18px; }
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(180px, 1fr));
+      gap: 14px;
+    }
+    .field label {
+      display: block;
+      margin: 0 0 7px;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    input, select {
+      width: 100%;
+      height: 38px;
+      border: 1px solid #c8d3df;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      outline: none;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(15, 95, 117, .14);
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .btn {
+      min-height: 38px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 9px 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease, transform .12s ease, box-shadow .15s ease;
+      white-space: nowrap;
+    }
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(15, 95, 117, .18);
+    }
+    .btn:disabled {
+      cursor: not-allowed;
+      opacity: .58;
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-primary { background: var(--primary); }
+    .btn-primary:hover:not(:disabled) { background: #0d5368; }
+    .btn-emphasis { background: #086987; }
+    .btn-emphasis:hover:not(:disabled) { background: #075671; }
+    .btn-secondary {
+      background: #eef3f8;
+      border-color: #d6e0ea;
+      color: #223344;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #e3ebf3; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #e8f4f8;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .alert {
+      display: none;
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      border: 1px solid transparent;
+    }
+    .alert.show { display: block; }
+    .alert.info { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .alert.success { background: #ecfdf3; color: #15803d; border-color: #bbf7d0; }
+    .alert.error { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .alert.warning { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .list-meta, .pager {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .list-meta select {
+      width: 82px;
+      height: 34px;
+      flex: 0 0 82px;
+    }
+    .list-meta .btn {
+      min-height: 34px;
+      padding: 7px 12px;
+    }
+    .table-shell {
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: 590px;
+      border-top: 1px solid var(--border);
+      background: #fff;
+    }
+    table {
+      table-layout: fixed;
+      min-width: 2160px;
+      width: 2160px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid #e8edf3;
+      border-right: 1px solid #edf2f7;
+      padding: 10px 11px;
+      text-align: left;
+      vertical-align: middle;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f6f8fb;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    tbody tr { transition: background .12s ease; }
+    tbody tr:hover { background: #f8fbff; }
+    tbody tr.selected-row { background: #eef7ff; }
+    .col-check { width: 50px; text-align: center; }
+    .col-source { width: 260px; }
+    .col-info { width: 260px; }
+    .col-title { width: 320px; }
+    .col-date { width: 150px; }
+    .col-region { width: 120px; }
+    .col-related { width: 180px; }
+    .col-preview { width: 420px; }
+    td.check-cell { text-align: center; }
+    td.check-cell input { width: 16px; height: 16px; }
+    .mono {
+      font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+      font-size: 11px;
+    }
+    .cell-ellipsis {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .line-clamp-2, .line-clamp-3 {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      white-space: normal;
+      word-break: break-word;
+    }
+    .line-clamp-2 { -webkit-line-clamp: 2; line-clamp: 2; }
+    .line-clamp-3 { -webkit-line-clamp: 3; line-clamp: 3; color: #475569; }
+    details.sample-card summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    details.sample-card summary::-webkit-details-marker { display: none; }
+    .sample-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr);
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .json {
+      margin: 0;
+      max-height: 280px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border: 1px solid #e5eaf0;
+      border-radius: 6px;
+      background: #f8fafc;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    @media (max-width: 1366px) {
+      .config-grid { grid-template-columns: repeat(3, minmax(190px, 1fr)); }
+      main { padding: 16px; }
+    }
+    @media (max-width: 768px) {
+      .topbar { padding: 0 16px; }
+      .topbar h1 { font-size: 18px; }
+      main { padding: 12px; }
+      .card-header { align-items: flex-start; flex-direction: column; }
+      .config-grid { grid-template-columns: 1fr; }
+      .btn { width: 100%; }
+      .toolbar { align-items: stretch; }
+      .sample-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <header><h1>数据库文章选择</h1></header>
+  <header class="topbar">
+    <h1><span aria-hidden="true">📄</span><span>数据库文章选择</span></h1>
+  </header>
   <main>
-    <section class="panel">
-      <h2>配置</h2>
-      <div class="panel-body">
-        <div class="grid">
-          <div><label for="configPath">数据库配置文件路径</label><input id="configPath" value="config/db_config.yml"></div>
-          <div><label for="fieldConfigPath">字段配置文件路径</label><input id="fieldConfigPath" value="config/field_mapping.yml"></div>
-          <div><label for="templatePath">Excel 模板路径</label><input id="templatePath" value="template/陕西西安.xlsx"></div>
-          <div><label for="keyword">关键词/语义搜索</label><input id="keyword" value=""></div>
-          <div><label for="outputFile">输出文件名</label><input id="outputFile" value="outputs/result.xlsx"></div>
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">提取配置</h2>
+      </div>
+      <div class="card-body">
+        <div class="config-grid">
+          <div class="field"><label for="configPath">数据库配置文件路径</label><input id="configPath" value="config/db_config.yml"></div>
+          <div class="field"><label for="fieldConfigPath">字段配置文件路径</label><input id="fieldConfigPath" value="config/field_mapping.yml"></div>
+          <div class="field"><label for="templatePath">Excel 模板路径</label><input id="templatePath" value="template/陕西西安.xlsx"></div>
+          <div class="field"><label for="keyword">关键词/语义搜索</label><input id="keyword" placeholder="请输入关键词或正文内容" value=""></div>
+          <div class="field"><label for="outputFile">输出文件名</label><input id="outputFile" value="outputs/result.xlsx"></div>
         </div>
-        <div class="actions">
-          <button class="primary" id="loadBtn">加载数据库内容</button>
-          <button class="secondary" id="selectPageBtn">全选当前页</button>
-          <button class="secondary" id="clearBtn">清空选择</button>
-          <button class="primary" id="startBtn">开始提取已选择数据</button>
-          <span id="selectedCount" class="status">已选择 0 条</span>
+        <div class="toolbar">
+          <button class="btn btn-primary" id="loadBtn">加载数据库内容</button>
+          <button class="btn btn-secondary" id="selectPageBtn">全选当前页</button>
+          <button class="btn btn-secondary" id="clearBtn">清空选择</button>
+          <button class="btn btn-emphasis" id="startBtn">开始提取已选择数据</button>
+          <span id="selectedCount" class="badge">已选择 0 条</span>
         </div>
-        <div id="status" class="status"></div>
+        <div id="status" class="alert" role="status"></div>
       </div>
     </section>
 
-    <section class="panel">
-      <h2>数据库内容列表</h2>
-      <div class="panel-body pager">
-        <button class="secondary" id="prevBtn">上一页</button>
-        <span id="pageInfo">第 1 页</span>
-        <button class="secondary" id="nextBtn">下一页</button>
-        <label for="pageSize" style="margin:0;">每页条数</label>
-        <select id="pageSize" style="width:90px;">
-          <option>10</option>
-          <option selected>20</option>
-          <option>50</option>
-          <option>100</option>
-        </select>
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">数据库内容列表</h2>
+        <div class="list-meta">
+          <span id="totalInfo">共 0 条</span>
+          <span id="pageInfo">第 1 / 1 页</span>
+          <span>每页</span>
+          <select id="pageSize">
+            <option>10</option>
+            <option selected>20</option>
+            <option>50</option>
+            <option>100</option>
+          </select>
+          <span>条</span>
+          <button class="btn btn-secondary" id="prevBtn">上一页</button>
+          <button class="btn btn-secondary" id="nextBtn">下一页</button>
+        </div>
       </div>
-      <div class="table-wrap"><table id="recordTable"></table></div>
+      <div class="table-shell"><table id="recordTable"></table></div>
     </section>
 
-    <section class="panel">
-      <h2>示例校验</h2>
-      <div class="panel-body">
-        <div class="actions"><button class="secondary" id="sampleBtn">加载示例</button><span id="sampleStatus" class="status"></span></div>
-        <pre id="sampleRecord" class="json"></pre>
-        <div class="table-wrap" style="margin-top:12px;"><table id="sampleDiffTable"></table></div>
+    <details class="card sample-card">
+      <summary class="card-header">
+        <h2 class="card-title">示例校验</h2>
+        <span class="badge">可展开</span>
+      </summary>
+      <div class="card-body">
+        <div class="toolbar" style="margin-top:0;">
+          <button class="btn btn-secondary" id="sampleBtn">加载示例</button>
+          <span id="sampleStatus" class="badge">未加载</span>
+        </div>
+        <div class="sample-grid">
+          <div>
+            <h3 class="card-title" style="font-size:14px;margin:0 0 8px;">模拟数据库记录</h3>
+            <pre id="sampleRecord" class="json"></pre>
+          </div>
+          <div>
+            <h3 class="card-title" style="font-size:14px;margin:0 0 8px;">差异字段</h3>
+            <div class="table-shell" style="max-height:280px;"><table id="sampleDiffTable" style="min-width:720px;width:720px;"></table></div>
+          </div>
+        </div>
       </div>
-    </section>
+    </details>
   </main>
 
   <script>
@@ -99,18 +377,25 @@
     let total = 0;
     let records = [];
 
-    function setStatus(text, error = false) {
-      $("status").textContent = text;
-      $("status").className = error ? "status error" : "status";
+    function setStatus(text, type = "info") {
+      const el = $("status");
+      el.textContent = text;
+      el.className = text ? `alert show ${type}` : "alert";
+    }
+
+    function setLoading(button, isLoading, loadingText) {
+      if (!button.dataset.label) button.dataset.label = button.textContent;
+      button.disabled = isLoading;
+      button.textContent = isLoading ? loadingText : button.dataset.label;
     }
 
     function updateSelectedCount() {
       $("selectedCount").textContent = `已选择 ${selectedIds.size} 条`;
     }
 
-    function renderTable(tableId, rows, headers, renderer) {
+    function renderTable(tableId, rows, headers, renderer, colgroupHtml = "") {
       const table = $(tableId);
-      table.innerHTML = "";
+      table.innerHTML = colgroupHtml;
       const thead = document.createElement("thead");
       const tr = document.createElement("tr");
       headers.forEach((header) => {
@@ -125,32 +410,62 @@
       table.appendChild(tbody);
     }
 
+    function textSpan(value, className = "cell-ellipsis") {
+      const span = document.createElement("span");
+      const text = value ?? "";
+      span.className = className;
+      span.textContent = text;
+      span.title = text;
+      return span;
+    }
+
     function renderRecords() {
       const headers = ["选择", "source_id", "info_id", "title", "article_time", "audit_time", "region", "related_info", "content_preview"];
+      const colgroup = `
+        <colgroup>
+          <col class="col-check"><col class="col-source"><col class="col-info"><col class="col-title">
+          <col class="col-date"><col class="col-date"><col class="col-region"><col class="col-related"><col class="col-preview">
+        </colgroup>`;
       renderTable("recordTable", records, headers, (row) => {
         const tr = document.createElement("tr");
+        if (selectedIds.has(row.source_id)) tr.classList.add("selected-row");
         const checkTd = document.createElement("td");
+        checkTd.className = "check-cell";
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = selectedIds.has(row.source_id);
         checkbox.addEventListener("change", () => {
-          if (checkbox.checked) selectedIds.add(row.source_id);
-          else selectedIds.delete(row.source_id);
+          if (checkbox.checked) {
+            selectedIds.add(row.source_id);
+            tr.classList.add("selected-row");
+          } else {
+            selectedIds.delete(row.source_id);
+            tr.classList.remove("selected-row");
+          }
           updateSelectedCount();
         });
         checkTd.appendChild(checkbox);
         tr.appendChild(checkTd);
+
+        const cellConfig = {
+          source_id: "mono cell-ellipsis",
+          info_id: "mono cell-ellipsis",
+          title: "line-clamp-2",
+          content_preview: "line-clamp-3"
+        };
         headers.slice(1).forEach((header) => {
           const td = document.createElement("td");
-          td.textContent = row[header] ?? "";
-          if (header === "content_preview") td.className = "preview";
+          td.appendChild(textSpan(row[header], cellConfig[header] || "cell-ellipsis"));
           tr.appendChild(td);
         });
         return tr;
-      });
+      }, colgroup);
       const pageSize = Number($("pageSize").value);
       const pages = Math.max(1, Math.ceil(total / pageSize));
-      $("pageInfo").textContent = `第 ${page} / ${pages} 页，共 ${total} 条`;
+      $("totalInfo").textContent = `共 ${total} 条`;
+      $("pageInfo").textContent = `第 ${page} / ${pages} 页`;
+      $("prevBtn").disabled = page <= 1;
+      $("nextBtn").disabled = page >= pages;
       updateSelectedCount();
     }
 
@@ -162,17 +477,24 @@
         page: String(page),
         page_size: $("pageSize").value
       });
-      setStatus("正在加载数据库内容...");
-      const response = await fetch(`/api/db/records?${params.toString()}`);
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(data.detail || response.statusText, true);
-        return;
+      setStatus("正在加载数据库内容...", "info");
+      setLoading($("loadBtn"), true, "加载中...");
+      try {
+        const response = await fetch(`/api/db/records?${params.toString()}`);
+        const data = await response.json();
+        if (!response.ok) {
+          setStatus(data.detail || response.statusText, "error");
+          return;
+        }
+        total = data.total;
+        records = data.records || [];
+        renderRecords();
+        setStatus(records.length ? "数据库内容已加载" : "没有符合条件的数据", records.length ? "success" : "warning");
+      } catch (error) {
+        setStatus(error.message || "加载失败", "error");
+      } finally {
+        setLoading($("loadBtn"), false, "加载中...");
       }
-      total = data.total;
-      records = data.records || [];
-      renderRecords();
-      setStatus("数据库内容已加载");
     }
 
     function selectCurrentPage() {
@@ -187,7 +509,7 @@
 
     async function startSelected() {
       if (selectedIds.size === 0) {
-        setStatus("请至少选择一条数据", true);
+        setStatus("请至少选择一条数据", "error");
         return;
       }
       const payload = {
@@ -198,31 +520,38 @@
         output_file: $("outputFile").value.trim(),
         selected_ids: Array.from(selectedIds)
       };
-      setStatus("正在提交提取任务...");
-      const response = await fetch("/api/task/start-selected", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(data.detail || response.statusText, true);
-        return;
+      setStatus("正在提交提取任务...", "info");
+      setLoading($("startBtn"), true, "提交中...");
+      try {
+        const response = await fetch("/api/task/start-selected", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          setStatus(data.detail || response.statusText, "error");
+          return;
+        }
+        window.location.href = `/static/result.html?task_id=${encodeURIComponent(data.task_id)}`;
+      } catch (error) {
+        setStatus(error.message || "提交失败", "error");
+      } finally {
+        setLoading($("startBtn"), false, "提交中...");
       }
-      window.location.href = `/static/result.html?task_id=${encodeURIComponent(data.task_id)}`;
     }
 
     async function loadSample() {
-      $("sampleStatus").textContent = "正在加载示例...";
+      $("sampleStatus").textContent = "正在加载...";
       const response = await fetch("/api/sample");
       const data = await response.json();
       $("sampleRecord").textContent = JSON.stringify(data.record, null, 2);
-      $("sampleStatus").textContent = data.sample_matched ? "示例结果与期望一致" : "示例结果与期望不一致";
+      $("sampleStatus").textContent = data.sample_matched ? "结果一致" : "存在差异";
       renderTable("sampleDiffTable", data.diff_fields || [], ["field", "expected", "actual"], (row) => {
         const tr = document.createElement("tr");
         ["field", "expected", "actual"].forEach((key) => {
           const td = document.createElement("td");
-          td.textContent = row[key] ?? "";
+          td.appendChild(textSpan(row[key]));
           tr.appendChild(td);
         });
         return tr;
