@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from cleaner import clean_text, normalize_date, normalize_record
 from columns import TARGET_COLUMNS
+from llm_extractor import LLMConfig, call_llm, evidence_rows, load_llm_config
 
 
 HEADER_ALIASES = {
@@ -197,7 +198,33 @@ def merge_records(base: Dict[str, str], extracted: Dict[str, str], columns: Sequ
     return normalize_record(merged, columns)
 
 
-def extract_record(record: Dict[str, Any], columns: Sequence[str] | None = None, keyword: str = "") -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+def merge_llm_record(base: Dict[str, str], rule: Dict[str, str], llm: Dict[str, str], columns: Sequence[str]) -> Dict[str, str]:
+    merged = blank_record(columns)
+    for column in columns:
+        merged[column] = clean_text(base.get(column)) or clean_text(llm.get(column)) or clean_text(rule.get(column))
+    return normalize_record(merged, columns)
+
+
+def has_conflict(rule: Dict[str, str], llm: Dict[str, str], columns: Sequence[str]) -> bool:
+    metadata_fields = {"info_id", "文章时间", "审核日期", "地区名称", "相关资讯"}
+    for column in columns:
+        if column in metadata_fields:
+            continue
+        rule_value = clean_text(rule.get(column))
+        llm_value = clean_text(llm.get(column))
+        if rule_value and llm_value and rule_value != llm_value:
+            return True
+    return False
+
+
+def extract_record(
+    record: Dict[str, Any],
+    columns: Sequence[str] | None = None,
+    keyword: str = "",
+    use_llm: bool | None = None,
+    llm_config: LLMConfig | None = None,
+    llm_config_path: str = "config/llm_config.yml",
+) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
     columns = list(columns or TARGET_COLUMNS)
     html = clean_text(record.get("html"))
     text = clean_text(record.get("text"))
@@ -211,6 +238,14 @@ def extract_record(record: Dict[str, Any], columns: Sequence[str] | None = None,
         "message": "",
         "records": 0,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "llm_used": False,
+        "llm_model": "",
+        "llm_input_chars": 0,
+        "llm_success": False,
+        "llm_error": "",
+        "need_manual_review": False,
+        "review_reason": "",
+        "field_evidence": [],
     }
     if not combined_text.strip():
         log.update({"status": "empty_content", "message": "html and text are empty"})
@@ -230,5 +265,53 @@ def extract_record(record: Dict[str, Any], columns: Sequence[str] | None = None,
     final_records = [item for item in final_records if has_business_value(item)]
     if not final_records:
         final_records = [normalize_record(base, columns)]
+
+    should_call_llm = use_llm is not False
+    if should_call_llm and len(combined_text) >= 20:
+        config = llm_config or load_llm_config(llm_config_path)
+        llm_result = call_llm(record, columns, config)
+        log["llm_used"] = llm_result.used
+        log["llm_model"] = llm_result.model
+        log["llm_input_chars"] = llm_result.input_chars
+        log["llm_success"] = llm_result.success and llm_result.used
+        log["llm_error"] = llm_result.error
+        if llm_result.error and not llm_result.used:
+            log["message"] = llm_result.error
+        if llm_result.success:
+            log["need_manual_review"] = llm_result.need_manual_review
+            log["review_reason"] = llm_result.review_reason
+            if llm_result.records:
+                conflicts = any(
+                    has_conflict(final_records[min(index, len(final_records) - 1)], llm_record, columns)
+                    for index, llm_record in enumerate(llm_result.records)
+                    if final_records
+                )
+                fused_records = []
+                for index, llm_record in enumerate(llm_result.records):
+                    rule_record = final_records[min(index, len(final_records) - 1)] if final_records else blank_record(columns)
+                    fused_records.append(merge_llm_record(base, rule_record, llm_record, columns))
+                final_records = [item for item in fused_records if has_business_value(item)] or final_records
+                if conflicts:
+                    log["need_manual_review"] = True
+                    reason = "规则结果与 LLM 结果存在字段冲突"
+                    log["review_reason"] = f"{log['review_reason']}; {reason}".strip("; ")
+                log["field_evidence"] = evidence_rows(
+                    clean_text(record.get("source_id")),
+                    clean_text(record.get("info_id")),
+                    final_records,
+                    llm_result.evidence,
+                    llm_result.confidence,
+                    "llm",
+                    llm_result.model,
+                )
+            elif llm_result.need_manual_review and not any(has_business_value(item) for item in final_records):
+                log["need_manual_review"] = True
+                log["review_reason"] = llm_result.review_reason or "LLM 未抽取到结构化记录"
+        elif llm_result.used:
+            log["need_manual_review"] = True
+            log["review_reason"] = llm_result.error or "LLM 调用失败，已回退规则结果"
+    elif should_call_llm:
+        log["message"] = "content too short for LLM; using rule extraction"
+
     log["records"] = len(final_records)
     return final_records, log

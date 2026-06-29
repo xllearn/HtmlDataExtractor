@@ -9,7 +9,21 @@ from columns import TARGET_COLUMNS
 
 RESULT_SHEET = "结果数据"
 LOG_SHEET = "采集日志"
-LOG_COLUMNS = ["source_id", "info_id", "title", "status", "message", "records", "time"]
+EVIDENCE_SHEET = "字段证据"
+LOG_COLUMNS = [
+    "source_id",
+    "info_id",
+    "title",
+    "status",
+    "message",
+    "records",
+    "time",
+    "llm_used",
+    "llm_success",
+    "need_manual_review",
+    "review_reason",
+]
+EVIDENCE_COLUMNS = ["source_id", "info_id", "field", "value", "evidence", "confidence", "source", "rule_name"]
 
 
 def ensure_sheet(workbook, name: str):
@@ -111,6 +125,7 @@ def write_excel(
     output: str | Path,
     columns: Sequence[str] | None = None,
     template_path: str | Path = "",
+    field_evidence: Iterable[Dict[str, Any]] | None = None,
 ) -> str:
     columns = list(columns or TARGET_COLUMNS)
     output_path = Path(output)
@@ -125,16 +140,24 @@ def write_excel(
 
     result_sheet = ensure_sheet(workbook, RESULT_SHEET)
     log_sheet = ensure_sheet(workbook, LOG_SHEET)
+    evidence_sheet = ensure_sheet(workbook, EVIDENCE_SHEET)
     if use_template:
         write_template_result_rows(result_sheet, columns, records)
     else:
         write_plain_rows(result_sheet, columns, records)
 
     prepared_logs = []
+    prepared_evidence = [dict(row) for row in (field_evidence or [])]
     for log in logs:
         item = dict(log)
         item.setdefault("time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        item.setdefault("llm_used", False)
+        item.setdefault("llm_success", False)
+        item.setdefault("need_manual_review", False)
+        item.setdefault("review_reason", "")
         prepared_logs.append(item)
+        prepared_evidence.extend(dict(row) for row in item.get("field_evidence") or [])
     write_plain_rows(log_sheet, LOG_COLUMNS, prepared_logs)
+    write_plain_rows(evidence_sheet, EVIDENCE_COLUMNS, prepared_evidence)
     workbook.save(output_path)
     return str(output_path)

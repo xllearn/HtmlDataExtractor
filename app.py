@@ -29,6 +29,8 @@ class PipelineRequest(BaseModel):
     template_path: str = "template/陕西西安.xlsx"
     keyword: str = ""
     output_file: str = "outputs/result.xlsx"
+    llm_config_path: str = "config/llm_config.yml"
+    use_llm: Optional[bool] = None
 
 
 class SelectedPipelineRequest(PipelineRequest):
@@ -76,20 +78,57 @@ def summarize(summary: Dict[str, Any]) -> Dict[str, Any]:
         "failed_count": summary.get("failed_count", 0),
         "skipped_count": summary.get("skipped_count", 0),
         "empty_count": summary.get("empty_count", 0),
+        "manual_review_count": summary.get("manual_review_count", 0),
+        "llm_success_count": summary.get("llm_success_count", 0),
+        "llm_failed_count": summary.get("llm_failed_count", 0),
         "output_file": summary.get("output_file", ""),
     }
 
 
+def task_dir(task_id: str) -> Path:
+    return Path("outputs") / task_id
+
+
+def task_output_path(task_id: str, request: PipelineRequest | None = None) -> Path:
+    return task_dir(task_id) / "result.xlsx"
+
+
+def task_status_path(task_id: str) -> Path:
+    return task_dir(task_id) / "status.json"
+
+
+def task_log_path(task_id: str) -> Path:
+    return task_dir(task_id) / "task_log.json"
+
+
+def persist_task(task_id: str) -> None:
+    task_dir(task_id).mkdir(parents=True, exist_ok=True)
+    task = tasks[task_id]
+    task_status_path(task_id).write_text(json.dumps(task, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    task_log_path(task_id).write_text(json.dumps(task.get("logs") or [], ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+
+def load_persisted_task(task_id: str) -> Dict[str, Any] | None:
+    path = task_status_path(task_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def run_task(task_id: str, request: PipelineRequest, selected_ids: Optional[List[str]] = None) -> None:
     tasks[task_id]["status"] = "running"
+    persist_task(task_id)
     try:
+        output_file = task_output_path(task_id, request)
         summary = run_pipeline(
             request.config_path,
             request.field_config_path,
-            request.output_file,
+            output_file,
             keyword=request.keyword,
             template_path=request.template_path,
             selected_ids=selected_ids,
+            use_llm=request.use_llm,
+            llm_config_path=request.llm_config_path,
         )
         task_summary = summarize(summary)
         tasks[task_id].update(
@@ -107,6 +146,7 @@ def run_task(task_id: str, request: PipelineRequest, selected_ids: Optional[List
         )
     except Exception as exc:
         tasks[task_id].update({"status": "failed", "message": str(exc), "summary": {}})
+    persist_task(task_id)
 
 
 @app.get("/")
@@ -147,10 +187,11 @@ async def start_task(request: PipelineRequest, background_tasks: BackgroundTasks
         "status": "pending",
         "message": "任务已提交",
         "summary": {},
-        "output_file": request.output_file,
+        "output_file": str(task_output_path(task_id, request)),
         "data": [],
         "logs": [],
     }
+    persist_task(task_id)
     background_tasks.add_task(run_task, task_id, request, None)
     return TaskStartResponse(task_id=task_id, message="任务已提交，正在后台提取")
 
@@ -165,10 +206,11 @@ async def start_selected_task(request: SelectedPipelineRequest, background_tasks
         "status": "pending",
         "message": "任务已提交",
         "summary": {"selected_count": len(selected_ids)},
-        "output_file": request.output_file,
+        "output_file": str(task_output_path(task_id, request)),
         "data": [],
         "logs": [],
     }
+    persist_task(task_id)
     background_tasks.add_task(run_task, task_id, request, selected_ids)
     return TaskStartResponse(task_id=task_id, message="任务已提交，正在后台提取")
 
@@ -176,6 +218,8 @@ async def start_selected_task(request: SelectedPipelineRequest, background_tasks
 @app.get("/api/task/status/{task_id}", response_model=TaskStatusResponse)
 async def task_status(task_id: str) -> TaskStatusResponse:
     task = tasks.get(task_id)
+    if not task:
+        task = load_persisted_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return TaskStatusResponse(
@@ -189,6 +233,8 @@ async def task_status(task_id: str) -> TaskStatusResponse:
 @app.get("/api/task/result/{task_id}", response_model=PipelineResponse)
 async def task_result(task_id: str) -> PipelineResponse:
     task = tasks.get(task_id)
+    if not task:
+        task = load_persisted_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task["status"] != "completed":
@@ -205,6 +251,8 @@ async def task_result(task_id: str) -> PipelineResponse:
 @app.get("/api/task/download/{task_id}")
 async def task_download(task_id: str) -> FileResponse:
     task = tasks.get(task_id)
+    if not task:
+        task = load_persisted_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task["status"] != "completed":
@@ -225,7 +273,7 @@ async def sample() -> Dict[str, Any]:
     result_path = Path("examples/sample_result.json")
     record = json.loads(record_path.read_text(encoding="utf-8"))
     mapping = load_field_mapping("config/field_mapping.yml")
-    records, logs = extract_record(record, mapping.output_columns, keyword="医保")
+    records, logs = extract_record(record, mapping.output_columns, keyword="医保", use_llm=False)
     result = fill_missing_by_field(records[0], mapping) if records else {}
     expected = json.loads(result_path.read_text(encoding="utf-8"))
     diff_fields = [

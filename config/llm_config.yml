@@ -1,0 +1,13 @@
+llm:
+  enabled: true
+  provider: deepseek
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-v4-flash"
+  timeout_seconds: 60
+  max_retries: 2
+  temperature: 0
+  max_input_chars: 20000
+  fallback_to_rules_on_error: true
+  write_evidence_sheet: true
+  system_prompt_path: "prompts/extraction_system_prompt.txt"
+  user_prompt_path: "prompts/extraction_user_prompt.txt"

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import yaml
-from sqlalchemy import MetaData, String, bindparam, cast, create_engine, func, or_, select, text
+from sqlalchemy import MetaData, String, and_, bindparam, cast, create_engine, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from columns import TARGET_COLUMNS
@@ -31,6 +31,19 @@ FIELD_MAP = {
     "audit_time": "audit_time_column",
     "region": "region_column",
     "related_info": "related_info_column",
+}
+
+KEYWORD_SYNONYMS = {
+    "医保": ["医保", "医疗保险", "基本医疗保险", "职工医保", "居民医保"],
+    "医疗保险": ["医保", "医疗保险", "基本医疗保险", "职工医保", "居民医保"],
+    "门诊": ["门诊", "门诊统筹", "慢特病", "门诊慢特病"],
+    "慢特病": ["慢特病", "门诊慢特病", "门诊"],
+    "住院": ["住院", "入院", "出院"],
+    "报销": ["报销", "报销比例", "支付比例", "待遇"],
+    "待遇": ["待遇", "报销", "补助"],
+    "补助": ["补助", "补助限额", "限额"],
+    "起付": ["起付", "起付标准", "起付线"],
+    "限额": ["限额", "补助限额", "支付限额"],
 }
 
 
@@ -139,19 +152,38 @@ def _query_limit(config: DatabaseConfig) -> int | None:
     return max(int(limit), 0)
 
 
-def _keyword_conditions(keyword: str, table, labels: Dict[str, str]) -> Tuple[List[Any], Dict[str, str]]:
-    keyword = clean_text(keyword)
-    if not keyword:
+def keyword_terms(keyword: str) -> List[List[str]]:
+    parts = [part for part in re.split(r"[\s,，、]+", clean_text(keyword)) if part]
+    groups = []
+    for part in parts:
+        terms = KEYWORD_SYNONYMS.get(part, [part])
+        groups.append(list(dict.fromkeys(clean_text(term) for term in terms if clean_text(term))))
+    return groups
+
+
+def _keyword_conditions(config: DatabaseConfig, keyword: str, table, labels: Dict[str, str]) -> Tuple[List[Any], Dict[str, str]]:
+    groups = keyword_terms(keyword)
+    if not groups:
         return [], {}
 
     columns = []
     for standard_key in ("title", "text", "html", "info_id", "region", "related_info"):
         column_name = labels.get(standard_key)
         if column_name and column_name in table.c:
-            columns.append(cast(table.c[column_name], String).like(bindparam("keyword_like")))
+            columns.append(cast(table.c[column_name], String))
     if not columns:
         return [], {}
-    return [or_(*columns)], {"keyword_like": f"%{keyword}%"}
+    params: Dict[str, str] = {}
+    per_keyword = []
+    for group_index, terms in enumerate(groups):
+        term_conditions = []
+        for term_index, term in enumerate(terms):
+            param_name = f"keyword_{group_index}_{term_index}"
+            params[param_name] = f"%{term}%"
+            term_conditions.extend(column.like(bindparam(param_name)) for column in columns)
+        per_keyword.append(or_(*term_conditions))
+    mode = str(config.query.get("keyword_mode") or config.query.get("search_mode") or "or").lower()
+    return [and_(*per_keyword) if mode == "and" else or_(*per_keyword)], params
 
 
 def _to_standard(row: Dict[str, Any], labels: Dict[str, str], fallback_index: int = 0) -> Dict[str, Any]:
@@ -214,7 +246,7 @@ def read_record_page(config: DatabaseConfig, keyword: str = "", page: int = 1, p
     page_size = max(min(int(page_size or 20), 100), 1)
     engine, table = _table(config)
     selected, labels = _selected_columns(config, table)
-    keyword_filters, keyword_params = _keyword_conditions(keyword, table, labels)
+    keyword_filters, keyword_params = _keyword_conditions(config, keyword, table, labels)
     conditions = _configured_conditions(config) + keyword_filters
     configured_limit = _query_limit(config)
     offset = (page - 1) * page_size

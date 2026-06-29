@@ -1,6 +1,8 @@
 # 数据库文章内容自动提取与 Excel 整理工具
 
-本项目只从给定数据库读取文章数据，不再从 URL、本地 HTML、URL 列表或文件夹采集。员工可以先在网页中浏览数据库文章列表，勾选 1 条或多条记录，再执行固定 26 列字段提取并下载 Excel。
+本项目只从给定数据库读取文章数据，不再从 URL、本地 HTML、URL 列表或文件夹采集。员工可以先在网页中浏览数据库文章列表，按关键词/同义词扩展搜索并勾选 1 条或多条记录，再执行固定 26 列字段提取并下载 Excel。
+
+URL 只会作为数据库字段中的 `SourceURL` / `info_id` 检索条件或普通文本处理，系统不会直接请求外部网页。
 
 ## 固定输出字段
 
@@ -92,7 +94,42 @@ direct_field_columns:
   保险类型: "insurancetypename"
 ```
 
-字段合并优先级为：数据库标准字段、`direct_field_columns`、HTML/正文表格、正文键值对、推断字段、缺失值配置。
+字段合并优先级为：数据库标准字段、`direct_field_columns`、DeepSeek LLM 结果、HTML/正文表格、正文键值对、推断字段、缺失值配置。
+
+## DeepSeek 大模型配置
+
+系统支持在原有规则抽取后增加 DeepSeek 大模型提取节点，模型输出会经过严格 JSON 解析、固定 26 列字段校验、类型校验和多余字段删除，不会直接裸写 Excel。未配置 API KEY 时会自动使用原有规则提取，不会中断任务。
+
+API KEY 不写入代码或 YAML，只从环境变量读取：
+
+Windows PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的key"
+```
+
+Linux/macOS:
+
+```bash
+export DEEPSEEK_API_KEY="你的key"
+```
+
+默认 LLM 配置文件为 `config/llm_config.yml`：
+
+```yaml
+llm:
+  enabled: true
+  provider: deepseek
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-v4-flash"
+```
+
+如需切换为更强模型，可把 `model` 改为 `deepseek-v4-pro`。提示词位于：
+
+- `prompts/extraction_system_prompt.txt`
+- `prompts/extraction_user_prompt.txt`
+
+配置 API KEY 后，流程为“规则提取 + DeepSeek 提取 + 字段校验 + 融合”。数据库标准字段（`info_id`、文章时间、审核日期、地区名称、相关资讯）优先级最高，`direct_field_columns` 高于 LLM，LLM 高于简单推断。规则和 LLM 冲突时会标记 `need_manual_review` 并在日志/证据中保留可追溯信息。
 
 ## 命令行运行
 
@@ -108,8 +145,16 @@ python main.py `
   --field-config config/field_mapping.yml `
   --template template/陕西西安.xlsx `
   --keyword "医保 报销" `
-  --output outputs/result.xlsx
+  --output outputs/result.xlsx `
+  --use-llm `
+  --llm-config config/llm_config.yml
 ```
+
+LLM 参数：
+
+- `--use-llm`：启用规则 + DeepSeek 大模型融合提取。如果没有 `DEEPSEEK_API_KEY`，会打印提示并自动使用规则提取。
+- `--no-llm`：强制禁用大模型，仅使用规则提取。
+- `--llm-config config/llm_config.yml`：指定 LLM 配置文件。
 
 命令行默认读取配置范围内的全部记录。网页模式支持员工手动选择要提取的数据库记录。
 
@@ -128,21 +173,29 @@ http://localhost:8000
 网页使用流程：
 
 1. 打开首页。
-2. 输入或确认数据库配置文件路径。
-3. 点击“加载数据库内容”。
-4. 在数据库文章列表中勾选 1 条或多条记录。
-5. 可翻页、关键词搜索、全选当前页或清空选择。
-6. 点击“开始提取已选择数据”。
-7. 进入结果页查看固定 26 列提取结果和采集日志。
-8. 下载 Excel。
+2. 输入关键词，必要时展开“高级配置”确认配置文件路径。
+3. 选择是否启用大模型提取；未配置 `DEEPSEEK_API_KEY` 时会自动使用规则提取。
+4. 点击“加载数据库内容”。
+5. 在数据库文章列表中勾选 1 条或多条记录。
+6. 可翻页、关键词搜索、全选当前页或清空选择。
+7. 点击“开始提取已选择数据”。
+8. 进入结果页查看固定 26 列提取结果、采集日志、人工复核数和 LLM 调用统计。
+9. 下载 Excel。
 
 未选择记录时，页面会提示“请至少选择一条数据”。
+
+Web 任务输出路径固定为 `outputs/{task_id}/result.xlsx`，前端不能指定任意服务器路径。每个任务会写入：
+
+- `outputs/{task_id}/result.xlsx`
+- `outputs/{task_id}/task_log.json`
+- `outputs/{task_id}/status.json`
 
 ## 输出说明
 
 输出 Excel 默认包含：
 
 - `结果数据`：固定 26 列结果。
-- `采集日志`：每条数据库记录的处理状态，包括 `success`、`failed`、`skipped_keyword`、`empty_content`。
+- `采集日志`：每条数据库记录的处理状态，包括 `success`、`failed`、`skipped_keyword`、`empty_content`，以及 `llm_used`、`llm_success`、`need_manual_review`、`review_reason`。
+- `字段证据`：LLM 或规则产生的字段证据，包括 `source_id`、`info_id`、`field`、`value`、`evidence`、`confidence`、`source`、`rule_name`。
 
 如果 `template/陕西西安.xlsx` 存在，程序会基于模板写入，保留结果 sheet 的表头、样式、列宽、冻结窗格等格式，并从第二行开始写入数据。模板不存在时会生成普通 Excel。

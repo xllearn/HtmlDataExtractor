@@ -85,6 +85,34 @@
       grid-template-columns: repeat(5, minmax(180px, 1fr));
       gap: 14px;
     }
+    .search-row {
+      display: grid;
+      grid-template-columns: minmax(260px, 520px) minmax(260px, 1fr);
+      gap: 14px;
+      align-items: end;
+    }
+    .toggle-row {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #344054;
+      font-size: 13px;
+    }
+    .toggle-row input { width: 16px; height: 16px; }
+    details.advanced {
+      margin-top: 14px;
+      border: 1px solid #e5eaf0;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    details.advanced summary {
+      cursor: pointer;
+      padding: 11px 13px;
+      color: var(--primary);
+      font-weight: 700;
+    }
+    details.advanced .config-grid { padding: 0 13px 13px; }
     .field label {
       display: block;
       margin: 0 0 7px;
@@ -283,6 +311,7 @@
     }
     @media (max-width: 1366px) {
       .config-grid { grid-template-columns: repeat(3, minmax(190px, 1fr)); }
+      .search-row { grid-template-columns: 1fr 1fr; }
       main { padding: 16px; }
     }
     @media (max-width: 768px) {
@@ -291,6 +320,7 @@
       main { padding: 12px; }
       .card-header { align-items: flex-start; flex-direction: column; }
       .config-grid { grid-template-columns: 1fr; }
+      .search-row { grid-template-columns: 1fr; }
       .btn { width: 100%; }
       .toolbar { align-items: stretch; }
       .sample-grid { grid-template-columns: 1fr; }
@@ -307,12 +337,13 @@
         <h2 class="card-title">提取配置</h2>
       </div>
       <div class="card-body">
-        <div class="config-grid">
-          <div class="field"><label for="configPath">数据库配置文件路径</label><input id="configPath" value="config/db_config.yml"></div>
-          <div class="field"><label for="fieldConfigPath">字段配置文件路径</label><input id="fieldConfigPath" value="config/field_mapping.yml"></div>
-          <div class="field"><label for="templatePath">Excel 模板路径</label><input id="templatePath" value="template/陕西西安.xlsx"></div>
-          <div class="field"><label for="keyword">关键词/语义搜索</label><input id="keyword" placeholder="请输入关键词或正文内容" value=""></div>
-          <div class="field"><label for="outputFile">输出文件名</label><input id="outputFile" value="outputs/result.xlsx"></div>
+        <div class="search-row">
+          <div class="field"><label for="keyword">关键词/同义词扩展搜索</label><input id="keyword" placeholder="例如：医保 报销 门诊" value=""></div>
+          <label class="toggle-row" for="useLlm">
+            <input id="useLlm" type="checkbox" checked>
+            <span>启用大模型提取</span>
+            <span class="badge">未配置 DEEPSEEK_API_KEY 时自动使用规则提取</span>
+          </label>
         </div>
         <div class="toolbar">
           <button class="btn btn-primary" id="loadBtn">加载数据库内容</button>
@@ -321,6 +352,15 @@
           <button class="btn btn-emphasis" id="startBtn">开始提取已选择数据</button>
           <span id="selectedCount" class="badge">已选择 0 条</span>
         </div>
+        <details class="advanced">
+          <summary>高级配置</summary>
+          <div class="config-grid">
+            <div class="field"><label for="configPath">数据库配置文件路径</label><input id="configPath" value="config/db_config.yml"></div>
+            <div class="field"><label for="fieldConfigPath">字段配置文件路径</label><input id="fieldConfigPath" value="config/field_mapping.yml"></div>
+            <div class="field"><label for="templatePath">Excel 模板路径</label><input id="templatePath" value="template/陕西西安.xlsx"></div>
+            <div class="field"><label for="llmConfigPath">LLM 配置文件路径</label><input id="llmConfigPath" value="config/llm_config.yml"></div>
+          </div>
+        </details>
         <div id="status" class="alert" role="status"></div>
       </div>
     </section>
@@ -516,8 +556,9 @@
         config_path: $("configPath").value.trim(),
         field_config_path: $("fieldConfigPath").value.trim(),
         template_path: $("templatePath").value.trim(),
+        llm_config_path: $("llmConfigPath").value.trim(),
+        use_llm: $("useLlm").checked,
         keyword: $("keyword").value.trim(),
-        output_file: $("outputFile").value.trim(),
         selected_ids: Array.from(selectedIds)
       };
       setStatus("正在提交提取任务...", "info");
@@ -566,7 +607,7 @@
     $("clearBtn").addEventListener("click", clearSelection);
     $("startBtn").addEventListener("click", startSelected);
     $("sampleBtn").addEventListener("click", loadSample);
-    loadRecords(1);
+    renderRecords();
   </script>
 </body>
 </html>

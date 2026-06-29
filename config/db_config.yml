@@ -17,6 +17,7 @@ query:
   where: ""
   limit: 1000
   order_by: "AuditTime ASC"
+  keyword_mode: "or"
 
 direct_field_columns:
   文章时间: ""

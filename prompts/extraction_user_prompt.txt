@@ -1,0 +1,10 @@
+请从下面这条数据库文章记录中抽取固定 26 列 Excel 数据。请严格返回 JSON。
+
+数据库记录：
+{{record_json}}
+
+固定字段：
+{{target_columns_json}}
+
+输出 JSON Schema：
+{{schema_json}}
