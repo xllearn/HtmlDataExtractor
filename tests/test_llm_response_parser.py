@@ -77,3 +77,12 @@ def test_parse_invalid_json_returns_failure():
 
     assert result.success is False
     assert "JSON" in result.error
+
+
+def test_local_env_value_reads_project_env_file(tmp_path):
+    from llm_extractor import local_env_value
+
+    env_file = tmp_path / ".env.local"
+    env_file.write_text('DEEPSEEK_API_KEY="project-only-key"\n', encoding="utf-8")
+
+    assert local_env_value("DEEPSEEK_API_KEY", env_file) == "project-only-key"

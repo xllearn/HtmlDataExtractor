@@ -81,7 +81,25 @@ def load_llm_config(path: str | Path = "config/llm_config.yml") -> LLMConfig:
 
 
 def deepseek_api_key() -> str:
-    return os.getenv("DEEPSEEK_API_KEY", "").strip()
+    local_value = local_env_value("DEEPSEEK_API_KEY", os.getenv("HTMLDATAEXTRACTOR_ENV_FILE", ".env.local"))
+    return local_value or os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+
+def local_env_value(name: str, path: str | Path = ".env.local") -> str:
+    env_path = Path(path)
+    if not env_path.exists():
+        return ""
+    try:
+        for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            if key.strip() == name:
+                return value.strip().strip('"').strip("'")
+    except OSError:
+        return ""
+    return ""
 
 
 def llm_available(config: LLMConfig) -> tuple[bool, str]:
