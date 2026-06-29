@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from pathlib import Path
@@ -9,22 +10,24 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from scraper import TARGET_COLUMNS, save_excel, scrape_and_extract, write_sample
+from cleaner import load_field_mapping, fill_missing_by_field
+from columns import TARGET_COLUMNS
+from extractor import extract_record
+from main import run_pipeline
 
 
-app = FastAPI(title="网页自动化采集与整理工具")
+app = FastAPI(title="数据库文章内容自动提取与 Excel 整理工具")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 tasks: Dict[str, Dict[str, Any]] = {}
 
 
-class ScrapeRequest(BaseModel):
-    url: str = ""
+class PipelineRequest(BaseModel):
+    config_path: str = "config/db_config.yml"
+    field_config_path: str = "config/field_mapping.yml"
+    template_path: str = "template/陕西西安.xlsx"
     keyword: str = ""
-    api_key: str = ""
-    output_file: str = "采集结果.xlsx"
-    use_browser: bool = True
-    make_sample: bool = False
+    output_file: str = "outputs/result.xlsx"
 
 
 class TaskStartResponse(BaseModel):
@@ -39,7 +42,7 @@ class TaskStatusResponse(BaseModel):
     output_file: Optional[str] = None
 
 
-class ScrapeResponse(BaseModel):
+class PipelineResponse(BaseModel):
     status: str
     message: str
     data: List[Dict[str, Any]]
@@ -59,31 +62,26 @@ def read_result(path: str) -> List[Dict[str, Any]]:
     return df[TARGET_COLUMNS].fillna("").to_dict("records")
 
 
-def run_task(task_id: str, request: ScrapeRequest) -> None:
+def run_task(task_id: str, request: PipelineRequest) -> None:
     tasks[task_id]["status"] = "running"
     try:
-        sources: List[str] = []
-        if request.make_sample:
-            sources.append(write_sample())
-        if request.url.strip():
-            sources.extend([item.strip() for item in request.url.splitlines() if item.strip()])
-        if not sources:
-            raise ValueError("请提供 URL/本地 HTML 路径，或勾选生成示例")
-
-        records, logs = scrape_and_extract(
-            sources=sources,
+        summary = run_pipeline(
+            request.config_path,
+            request.field_config_path,
+            request.output_file,
             keyword=request.keyword,
-            api_key=request.api_key,
-            use_browser=request.use_browser,
+            template_path=request.template_path,
         )
-        save_excel(records, request.output_file, logs=logs, append=False)
         tasks[task_id].update(
             {
                 "status": "completed",
-                "message": f"完成，抽取 {len(records)} 条记录",
-                "output_file": request.output_file,
-                "data": read_result(request.output_file),
-                "logs": logs,
+                "message": (
+                    f"读取 {summary['read_count']} 条，成功 {summary['success_count']} 条，"
+                    f"失败 {summary['failed_count']} 条"
+                ),
+                "output_file": summary["output_file"],
+                "data": summary["records"],
+                "logs": summary["logs"],
             }
         )
     except Exception as exc:
@@ -96,7 +94,7 @@ async def index() -> FileResponse:
 
 
 @app.post("/api/task/start", response_model=TaskStartResponse)
-async def start_task(request: ScrapeRequest, background_tasks: BackgroundTasks) -> TaskStartResponse:
+async def start_task(request: PipelineRequest, background_tasks: BackgroundTasks) -> TaskStartResponse:
     task_id = str(uuid.uuid4())
     tasks[task_id] = {
         "status": "pending",
@@ -106,7 +104,7 @@ async def start_task(request: ScrapeRequest, background_tasks: BackgroundTasks) 
         "logs": [],
     }
     background_tasks.add_task(run_task, task_id, request)
-    return TaskStartResponse(task_id=task_id, message="任务已提交，正在后台采集")
+    return TaskStartResponse(task_id=task_id, message="任务已提交，正在后台提取")
 
 
 @app.get("/api/task/status/{task_id}", response_model=TaskStatusResponse)
@@ -122,16 +120,16 @@ async def task_status(task_id: str) -> TaskStatusResponse:
     )
 
 
-@app.get("/api/task/result/{task_id}", response_model=ScrapeResponse)
-async def task_result(task_id: str) -> ScrapeResponse:
+@app.get("/api/task/result/{task_id}", response_model=PipelineResponse)
+async def task_result(task_id: str) -> PipelineResponse:
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态：{task['status']}")
-    return ScrapeResponse(
+    return PipelineResponse(
         status="success",
-        message=task.get("message") or "采集完成",
+        message=task.get("message") or "提取完成",
         data=task.get("data") or [],
         logs=task.get("logs") or [],
     )
@@ -156,9 +154,14 @@ async def task_download(task_id: str) -> FileResponse:
 
 @app.get("/api/sample")
 async def sample() -> Dict[str, Any]:
-    sample_path = write_sample()
-    records, logs = scrape_and_extract([sample_path], keyword="西安 医保 门诊 报销", use_browser=False)
-    return {"sample_file": sample_path, "records": records, "logs": logs}
+    record_path = Path("examples/sample_db_record.json")
+    result_path = Path("examples/sample_result.json")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    mapping = load_field_mapping("config/field_mapping.yml")
+    records, logs = extract_record(record, mapping.output_columns, keyword="医保")
+    result = fill_missing_by_field(records[0], mapping) if records else {}
+    expected = json.loads(result_path.read_text(encoding="utf-8"))
+    return {"record": record, "result": result, "expected_result": expected, "logs": [logs]}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+{
+  "source_id": "sample-1",
+  "info_id": "sample-policy-001",
+  "title": "西安市商业补充保险门诊待遇示例",
+  "html": "",
+  "text": "医保 商业补充保险 类型：门诊 报销比例：70% 起付标准：200元",
+  "article_time": "2026-05-22",
+  "audit_time": "",
+  "region": "西安市",
+  "related_info": "示例来源",
+  "raw": {
+    "insurancetypename": "商业补充保险"
+  }
+}

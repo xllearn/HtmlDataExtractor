@@ -9,6 +9,8 @@ env/
 .env.*
 !.env.example
 .github_token.local
+config/*.local.yml
+config/*.local.yaml
 
 .trae/
 *.tmp
@@ -18,6 +20,8 @@ DAILY_WORKLOG.local.md
 
 evidence/
 html_pages/
+outputs/
+logs/
 sample.html
 sample_policy.html
 *.xlsx

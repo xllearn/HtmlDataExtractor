@@ -1,0 +1,19 @@
+database:
+  url: "mysql+pymysql://${HTMLDATAEXTRACTOR_DB_USER}:${HTMLDATAEXTRACTOR_DB_PASSWORD_URLENCODED}@192.168.36.36:3306/wangfanqi_test?charset=utf8mb4"
+
+source:
+  table: "temp_商业补充保险_20250523"
+  id_column: ""
+  info_id_column: "SourceURL"
+  title_column: "Title"
+  html_column: ""
+  text_column: "Content"
+  article_time_column: "AuditTime"
+  audit_time_column: "AuditTime"
+  region_column: "areaname"
+  related_info_column: "Source"
+
+query:
+  where: ""
+  limit: 1000
+  order_by: "AuditTime ASC"

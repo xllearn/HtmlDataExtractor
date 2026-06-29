@@ -3,19 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>网页自动化采集与整理工具</title>
+  <title>数据库文章内容自动提取与 Excel 整理工具</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f5f7fb;
+      --bg: #f4f6f8;
       --panel: #ffffff;
-      --line: #d8dee9;
+      --line: #d7dde5;
       --text: #1f2937;
       --muted: #64748b;
       --brand: #176b87;
       --brand-dark: #0f4f66;
       --ok: #0f766e;
-      --warn: #b45309;
       --bad: #b91c1c;
     }
     * { box-sizing: border-box; }
@@ -28,28 +27,27 @@
     header {
       background: #12343f;
       color: #fff;
-      padding: 22px 28px;
+      padding: 20px 28px;
       border-bottom: 4px solid #e4b363;
     }
-    header h1 { margin: 0; font-size: 24px; font-weight: 700; }
-    header p { margin: 8px 0 0; color: #dbeafe; font-size: 14px; }
-    main { padding: 22px; max-width: 1500px; margin: 0 auto; }
+    header h1 { margin: 0; font-size: 22px; }
+    main { padding: 20px; max-width: 1500px; margin: 0 auto; }
     .layout { display: grid; grid-template-columns: 420px 1fr; gap: 18px; align-items: start; }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
     }
     .panel h2 {
       font-size: 16px;
       margin: 0;
-      padding: 14px 16px;
+      padding: 13px 15px;
       border-bottom: 1px solid var(--line);
     }
-    .panel-body { padding: 16px; }
-    label { display: block; font-weight: 700; font-size: 13px; margin: 14px 0 6px; }
-    input, textarea {
+    .panel-body { padding: 15px; }
+    label { display: block; font-weight: 700; font-size: 13px; margin: 13px 0 6px; }
+    input {
       width: 100%;
       border: 1px solid #b8c2d2;
       border-radius: 6px;
@@ -57,10 +55,6 @@
       font: inherit;
       background: #fff;
     }
-    textarea { min-height: 98px; resize: vertical; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .checkline { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 13px; }
-    .checkline input { width: auto; }
     .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
     button, .download {
       border: 0;
@@ -78,229 +72,169 @@
     button.primary:hover { background: var(--brand-dark); }
     button.secondary { background: #e2e8f0; color: #1e293b; }
     .download { background: var(--ok); color: #fff; }
-    button:disabled { opacity: .6; cursor: wait; }
-    .status {
-      margin-top: 14px;
-      padding: 10px 12px;
+    .download.disabled { pointer-events: none; opacity: .45; }
+    .status { margin-top: 12px; color: var(--muted); font-size: 13px; min-height: 20px; }
+    .status.error { color: var(--bad); }
+    .table-wrap { overflow: auto; max-height: 480px; border-top: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 1400px; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 8px 9px; text-align: left; vertical-align: top; }
+    th { background: #f8fafc; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+    .json {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
       border-radius: 6px;
-      background: #eef6ff;
-      color: #164e63;
-      border: 1px solid #bfdbfe;
-      font-size: 13px;
+      padding: 10px;
+      max-height: 280px;
+      overflow: auto;
+      font-size: 12px;
     }
-    .status.error { background: #fef2f2; color: var(--bad); border-color: #fecaca; }
-    .status.ok { background: #ecfdf5; color: var(--ok); border-color: #99f6e4; }
-    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
-    .metric { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-    .metric strong { display: block; font-size: 22px; }
-    .metric span { color: var(--muted); font-size: 12px; }
-    .table-wrap { overflow: auto; max-height: 560px; border-top: 1px solid var(--line); }
-    table { border-collapse: collapse; width: 100%; min-width: 1900px; font-size: 13px; }
-    th, td { border-bottom: 1px solid #e5e7eb; border-right: 1px solid #eef2f7; padding: 8px 9px; text-align: left; vertical-align: top; }
-    th { position: sticky; top: 0; background: #f8fafc; z-index: 1; white-space: nowrap; }
-    td { max-width: 280px; }
-    .empty { color: var(--muted); padding: 26px; text-align: center; }
-    .log { margin-top: 14px; }
-    .log pre { white-space: pre-wrap; background: #0f172a; color: #d1fae5; border-radius: 8px; padding: 12px; max-height: 180px; overflow: auto; }
-    @media (max-width: 1000px) {
+    @media (max-width: 900px) {
       .layout { grid-template-columns: 1fr; }
-      .cards { grid-template-columns: 1fr 1fr; }
+      main { padding: 12px; }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>网页自动化采集与整理工具</h1>
-    <p>输入 URL、本地 HTML 路径或使用内置示例，自动抽取医保政策字段，清洗去重后导出 Excel。</p>
+    <h1>数据库文章内容自动提取与 Excel 整理工具</h1>
   </header>
-
   <main>
     <div class="layout">
       <section class="panel">
-        <h2>采集参数</h2>
+        <h2>提取任务</h2>
         <div class="panel-body">
-          <label for="url">目标 URL 或本地 HTML 路径</label>
-          <textarea id="url" placeholder="每行一个，例如：http://192.168.34.29:9011/index.html#/policy-info/detail?articleId=2560b609-200b-4b2d-8f01-907cab743158"></textarea>
+          <label for="configPath">数据库配置文件路径</label>
+          <input id="configPath" value="config/db_config.yml">
 
-          <label for="keyword">关键词/语义检索</label>
-          <input id="keyword" value="西安 医保 门诊 报销" placeholder="例如：个人账户、门诊统筹、住院报销">
+          <label for="fieldConfigPath">字段配置文件路径</label>
+          <input id="fieldConfigPath" value="config/field_mapping.yml">
 
-          <div class="row">
-            <div>
-              <label for="output">输出文件名</label>
-              <input id="output" value="采集结果.xlsx">
-            </div>
-            <div>
-              <label for="apiKey">OpenAI API Key（可选）</label>
-              <input id="apiKey" type="password" placeholder="无 Key 时使用规则抽取">
-            </div>
-          </div>
+          <label for="templatePath">Excel 模板路径</label>
+          <input id="templatePath" value="template/陕西西安.xlsx">
 
-          <label class="checkline">
-            <input id="useBrowser" type="checkbox" checked>
-            使用浏览器渲染 URL（适合 Vue/React/哈希路由页面）
-          </label>
-          <label class="checkline">
-            <input id="makeSample" type="checkbox">
-            使用内置示例 HTML 现场运行
-          </label>
+          <label for="keyword">关键词/语义搜索</label>
+          <input id="keyword" value="">
+
+          <label for="outputFile">输出文件名</label>
+          <input id="outputFile" value="outputs/result.xlsx">
 
           <div class="actions">
-            <button class="primary" id="runBtn">开始采集</button>
-            <button class="secondary" id="sampleBtn">加载示例结果</button>
-            <a class="download" id="downloadBtn" href="#" style="display:none">下载 Excel</a>
+            <button class="primary" id="startBtn">开始提取</button>
+            <button class="secondary" id="sampleBtn">加载示例</button>
+            <a id="downloadBtn" class="download disabled" href="#">下载 Excel</a>
           </div>
-          <div class="status" id="status">初始化示例：点击“加载示例结果”可查看输入样例和抽取结果。</div>
+          <div id="status" class="status"></div>
         </div>
       </section>
 
-      <section>
-        <div class="cards">
-          <div class="metric"><strong id="count">0</strong><span>结果记录</span></div>
-          <div class="metric"><strong id="success">0</strong><span>成功来源</span></div>
-          <div class="metric"><strong id="failed">0</strong><span>失败来源</span></div>
-          <div class="metric"><strong id="cols">26</strong><span>Excel 字段</span></div>
-        </div>
-
-        <div class="panel">
-          <h2>结果预览</h2>
-          <div class="table-wrap" id="tableWrap">
-            <div class="empty">暂无数据。可以先加载示例，或输入页面后开始采集。</div>
-          </div>
-        </div>
-
-        <div class="panel log">
-          <h2>采集日志</h2>
-          <div class="panel-body"><pre id="logs">等待任务。</pre></div>
-        </div>
+      <section class="panel">
+        <h2>结果预览</h2>
+        <div class="table-wrap"><table id="resultTable"></table></div>
       </section>
     </div>
-  </main>
 
+    <section class="panel" style="margin-top:18px;">
+      <h2>采集日志</h2>
+      <div class="table-wrap"><table id="logTable"></table></div>
+    </section>
+
+    <section class="panel" style="margin-top:18px;">
+      <h2>模拟数据库记录</h2>
+      <div class="panel-body"><pre id="sampleRecord" class="json"></pre></div>
+    </section>
+  </main>
   <script>
     const columns = [
-      "文章时间", "审核日期", "info_id", "地区名称", "个人账户计入办法", "个人账户使用范围", "病种名称",
-      "类型", "标化类型", "保险类型", "人员类型", "病种类型", "就诊地域", "医院类型", "就诊情况",
-      "区间", "起付标准", "补助限额", "报销比例", "备注", "相关资讯", "审核状态0待审核1已审核",
-      "执行状态", "开始执行时间", "结束时间", "是否需要手动修改执行状态(1是0否)"
+      "文章时间","审核日期","info_id","地区名称","个人账户计入办法","个人账户使用范围","病种名称","类型","标化类型","保险类型","人员类型","病种类型","就诊地域","医院类型","就诊情况","区间","起付标准","补助限额","报销比例","备注","相关资讯","审核状态0待审核1已审核","执行状态","开始执行时间","结束时间","是否需要手动修改执行状态(1是0否)"
     ];
-
     const $ = (id) => document.getElementById(id);
-    let pollTimer = null;
 
-    function setStatus(text, type = "") {
+    function setStatus(text, error = false) {
       $("status").textContent = text;
-      $("status").className = "status" + (type ? " " + type : "");
+      $("status").className = error ? "status error" : "status";
     }
 
-    function renderRows(rows) {
-      $("count").textContent = rows.length;
-      if (!rows.length) {
-        $("tableWrap").innerHTML = '<div class="empty">未抽取到匹配数据。</div>';
-        return;
-      }
-      const head = columns.map(col => `<th>${col}</th>`).join("");
-      const body = rows.map(row => `<tr>${columns.map(col => `<td>${escapeHtml(row[col] || "")}</td>`).join("")}</tr>`).join("");
-      $("tableWrap").innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
-    }
-
-    function renderLogs(logs) {
-      const success = logs.filter(item => item.status === "success").length;
-      const failed = logs.filter(item => item.status === "failed").length;
-      $("success").textContent = success;
-      $("failed").textContent = failed;
-      $("logs").textContent = JSON.stringify(logs, null, 2);
-    }
-
-    function escapeHtml(value) {
-      return String(value).replace(/[&<>"']/g, char => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-      }[char]));
+    function renderTable(id, rows, headers) {
+      const table = $(id);
+      table.innerHTML = "";
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      headers.forEach((header) => {
+        const th = document.createElement("th");
+        th.textContent = header;
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        headers.forEach((header) => {
+          const td = document.createElement("td");
+          td.textContent = row[header] ?? "";
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
     }
 
     async function loadSample() {
-      setStatus("正在加载内置示例...", "");
-      const response = await fetch("/api/sample");
-      const result = await response.json();
-      $("url").value = result.sample_file || "sample_policy.html";
-      $("makeSample").checked = true;
-      renderRows(result.records || []);
-      renderLogs(result.logs || []);
-      setStatus("示例已加载：可直接点击“开始采集”生成 Excel。", "ok");
-    }
-
-    async function startTask() {
-      if (pollTimer) clearInterval(pollTimer);
-      $("runBtn").disabled = true;
-      $("downloadBtn").style.display = "none";
-      setStatus("任务提交中...", "");
-      renderRows([]);
-      renderLogs([]);
-
-      const payload = {
-        url: $("url").value.trim(),
-        keyword: $("keyword").value.trim(),
-        api_key: $("apiKey").value.trim(),
-        output_file: $("output").value.trim() || "采集结果.xlsx",
-        use_browser: $("useBrowser").checked,
-        make_sample: $("makeSample").checked
-      };
-
-      try {
-        const response = await fetch("/api/task/start", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(payload)
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || "任务提交失败");
-        setStatus(result.message, "");
-        pollTimer = setInterval(() => pollTask(result.task_id), 1600);
-        pollTask(result.task_id);
-      } catch (error) {
-        $("runBtn").disabled = false;
-        setStatus(error.message, "error");
-      }
+      setStatus("正在加载示例...");
+      const res = await fetch("/api/sample");
+      const data = await res.json();
+      $("sampleRecord").textContent = JSON.stringify(data.record, null, 2);
+      renderTable("resultTable", [data.result], columns);
+      renderTable("logTable", data.logs || [], ["source_id", "info_id", "title", "status", "message", "records", "time"]);
+      setStatus("示例已加载");
     }
 
     async function pollTask(taskId) {
-      const response = await fetch(`/api/task/status/${taskId}`);
-      const result = await response.json();
-      if (!response.ok) {
-        clearInterval(pollTimer);
-        $("runBtn").disabled = false;
-        setStatus(result.detail || "状态查询失败", "error");
+      const statusRes = await fetch(`/api/task/status/${taskId}`);
+      const status = await statusRes.json();
+      setStatus(status.message || status.status, status.status === "failed");
+      if (status.status === "completed") {
+        const resultRes = await fetch(`/api/task/result/${taskId}`);
+        const result = await resultRes.json();
+        renderTable("resultTable", result.data || [], columns);
+        renderTable("logTable", result.logs || [], ["source_id", "info_id", "title", "status", "message", "records", "time"]);
+        $("downloadBtn").href = `/api/task/download/${taskId}`;
+        $("downloadBtn").classList.remove("disabled");
         return;
       }
-      if (result.status === "completed") {
-        clearInterval(pollTimer);
-        await loadResult(taskId);
-      } else if (result.status === "failed") {
-        clearInterval(pollTimer);
-        $("runBtn").disabled = false;
-        setStatus(result.message || "任务失败", "error");
-      } else {
-        setStatus(result.message || `任务状态：${result.status}`, "");
-      }
+      if (status.status === "failed") return;
+      setTimeout(() => pollTask(taskId), 1200);
     }
 
-    async function loadResult(taskId) {
-      const response = await fetch(`/api/task/result/${taskId}`);
-      const result = await response.json();
-      $("runBtn").disabled = false;
-      if (!response.ok) {
-        setStatus(result.detail || "读取结果失败", "error");
+    async function startTask() {
+      $("downloadBtn").classList.add("disabled");
+      setStatus("正在提交任务...");
+      const payload = {
+        config_path: $("configPath").value.trim(),
+        field_config_path: $("fieldConfigPath").value.trim(),
+        template_path: $("templatePath").value.trim(),
+        keyword: $("keyword").value.trim(),
+        output_file: $("outputFile").value.trim()
+      };
+      const res = await fetch("/api/task/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        setStatus(await res.text(), true);
         return;
       }
-      renderRows(result.data || []);
-      renderLogs(result.logs || []);
-      $("downloadBtn").href = `/api/task/download/${taskId}`;
-      $("downloadBtn").style.display = "inline-flex";
-      setStatus(result.message || "采集完成", "ok");
+      const data = await res.json();
+      pollTask(data.task_id);
     }
 
-    $("runBtn").addEventListener("click", startTask);
     $("sampleBtn").addEventListener("click", loadSample);
+    $("startBtn").addEventListener("click", startTask);
+    loadSample();
   </script>
 </body>
 </html>
