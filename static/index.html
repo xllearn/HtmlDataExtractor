@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>网页自动化采集与整理工具</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d8dee9;
+      --text: #1f2937;
+      --muted: #64748b;
+      --brand: #176b87;
+      --brand-dark: #0f4f66;
+      --ok: #0f766e;
+      --warn: #b45309;
+      --bad: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      background: #12343f;
+      color: #fff;
+      padding: 22px 28px;
+      border-bottom: 4px solid #e4b363;
+    }
+    header h1 { margin: 0; font-size: 24px; font-weight: 700; }
+    header p { margin: 8px 0 0; color: #dbeafe; font-size: 14px; }
+    main { padding: 22px; max-width: 1500px; margin: 0 auto; }
+    .layout { display: grid; grid-template-columns: 420px 1fr; gap: 18px; align-items: start; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+    }
+    .panel h2 {
+      font-size: 16px;
+      margin: 0;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-body { padding: 16px; }
+    label { display: block; font-weight: 700; font-size: 13px; margin: 14px 0 6px; }
+    input, textarea {
+      width: 100%;
+      border: 1px solid #b8c2d2;
+      border-radius: 6px;
+      padding: 10px 11px;
+      font: inherit;
+      background: #fff;
+    }
+    textarea { min-height: 98px; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .checkline { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .checkline input { width: auto; }
+    .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    button, .download {
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+    }
+    button.primary { background: var(--brand); color: #fff; }
+    button.primary:hover { background: var(--brand-dark); }
+    button.secondary { background: #e2e8f0; color: #1e293b; }
+    .download { background: var(--ok); color: #fff; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .status {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #eef6ff;
+      color: #164e63;
+      border: 1px solid #bfdbfe;
+      font-size: 13px;
+    }
+    .status.error { background: #fef2f2; color: var(--bad); border-color: #fecaca; }
+    .status.ok { background: #ecfdf5; color: var(--ok); border-color: #99f6e4; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .metric { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+    .metric strong { display: block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 12px; }
+    .table-wrap { overflow: auto; max-height: 560px; border-top: 1px solid var(--line); }
+    table { border-collapse: collapse; width: 100%; min-width: 1900px; font-size: 13px; }
+    th, td { border-bottom: 1px solid #e5e7eb; border-right: 1px solid #eef2f7; padding: 8px 9px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #f8fafc; z-index: 1; white-space: nowrap; }
+    td { max-width: 280px; }
+    .empty { color: var(--muted); padding: 26px; text-align: center; }
+    .log { margin-top: 14px; }
+    .log pre { white-space: pre-wrap; background: #0f172a; color: #d1fae5; border-radius: 8px; padding: 12px; max-height: 180px; overflow: auto; }
+    @media (max-width: 1000px) {
+      .layout { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>网页自动化采集与整理工具</h1>
+    <p>输入 URL、本地 HTML 路径或使用内置示例，自动抽取医保政策字段，清洗去重后导出 Excel。</p>
+  </header>
+
+  <main>
+    <div class="layout">
+      <section class="panel">
+        <h2>采集参数</h2>
+        <div class="panel-body">
+          <label for="url">目标 URL 或本地 HTML 路径</label>
+          <textarea id="url" placeholder="每行一个，例如：http://192.168.34.29:9011/index.html#/policy-info/detail?articleId=2560b609-200b-4b2d-8f01-907cab743158"></textarea>
+
+          <label for="keyword">关键词/语义检索</label>
+          <input id="keyword" value="西安 医保 门诊 报销" placeholder="例如：个人账户、门诊统筹、住院报销">
+
+          <div class="row">
+            <div>
+              <label for="output">输出文件名</label>
+              <input id="output" value="采集结果.xlsx">
+            </div>
+            <div>
+              <label for="apiKey">OpenAI API Key（可选）</label>
+              <input id="apiKey" type="password" placeholder="无 Key 时使用规则抽取">
+            </div>
+          </div>
+
+          <label class="checkline">
+            <input id="useBrowser" type="checkbox" checked>
+            使用浏览器渲染 URL（适合 Vue/React/哈希路由页面）
+          </label>
+          <label class="checkline">
+            <input id="makeSample" type="checkbox">
+            使用内置示例 HTML 现场运行
+          </label>
+
+          <div class="actions">
+            <button class="primary" id="runBtn">开始采集</button>
+            <button class="secondary" id="sampleBtn">加载示例结果</button>
+            <a class="download" id="downloadBtn" href="#" style="display:none">下载 Excel</a>
+          </div>
+          <div class="status" id="status">初始化示例：点击“加载示例结果”可查看输入样例和抽取结果。</div>
+        </div>
+      </section>
+
+      <section>
+        <div class="cards">
+          <div class="metric"><strong id="count">0</strong><span>结果记录</span></div>
+          <div class="metric"><strong id="success">0</strong><span>成功来源</span></div>
+          <div class="metric"><strong id="failed">0</strong><span>失败来源</span></div>
+          <div class="metric"><strong id="cols">26</strong><span>Excel 字段</span></div>
+        </div>
+
+        <div class="panel">
+          <h2>结果预览</h2>
+          <div class="table-wrap" id="tableWrap">
+            <div class="empty">暂无数据。可以先加载示例，或输入页面后开始采集。</div>
+          </div>
+        </div>
+
+        <div class="panel log">
+          <h2>采集日志</h2>
+          <div class="panel-body"><pre id="logs">等待任务。</pre></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const columns = [
+      "文章时间", "审核日期", "info_id", "地区名称", "个人账户计入办法", "个人账户使用范围", "病种名称",
+      "类型", "标化类型", "保险类型", "人员类型", "病种类型", "就诊地域", "医院类型", "就诊情况",
+      "区间", "起付标准", "补助限额", "报销比例", "备注", "相关资讯", "审核状态0待审核1已审核",
+      "执行状态", "开始执行时间", "结束时间", "是否需要手动修改执行状态(1是0否)"
+    ];
+
+    const $ = (id) => document.getElementById(id);
+    let pollTimer = null;
+
+    function setStatus(text, type = "") {
+      $("status").textContent = text;
+      $("status").className = "status" + (type ? " " + type : "");
+    }
+
+    function renderRows(rows) {
+      $("count").textContent = rows.length;
+      if (!rows.length) {
+        $("tableWrap").innerHTML = '<div class="empty">未抽取到匹配数据。</div>';
+        return;
+      }
+      const head = columns.map(col => `<th>${col}</th>`).join("");
+      const body = rows.map(row => `<tr>${columns.map(col => `<td>${escapeHtml(row[col] || "")}</td>`).join("")}</tr>`).join("");
+      $("tableWrap").innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    function renderLogs(logs) {
+      const success = logs.filter(item => item.status === "success").length;
+      const failed = logs.filter(item => item.status === "failed").length;
+      $("success").textContent = success;
+      $("failed").textContent = failed;
+      $("logs").textContent = JSON.stringify(logs, null, 2);
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[char]));
+    }
+
+    async function loadSample() {
+      setStatus("正在加载内置示例...", "");
+      const response = await fetch("/api/sample");
+      const result = await response.json();
+      $("url").value = result.sample_file || "sample_policy.html";
+      $("makeSample").checked = true;
+      renderRows(result.records || []);
+      renderLogs(result.logs || []);
+      setStatus("示例已加载：可直接点击“开始采集”生成 Excel。", "ok");
+    }
+
+    async function startTask() {
+      if (pollTimer) clearInterval(pollTimer);
+      $("runBtn").disabled = true;
+      $("downloadBtn").style.display = "none";
+      setStatus("任务提交中...", "");
+      renderRows([]);
+      renderLogs([]);
+
+      const payload = {
+        url: $("url").value.trim(),
+        keyword: $("keyword").value.trim(),
+        api_key: $("apiKey").value.trim(),
+        output_file: $("output").value.trim() || "采集结果.xlsx",
+        use_browser: $("useBrowser").checked,
+        make_sample: $("makeSample").checked
+      };
+
+      try {
+        const response = await fetch("/api/task/start", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "任务提交失败");
+        setStatus(result.message, "");
+        pollTimer = setInterval(() => pollTask(result.task_id), 1600);
+        pollTask(result.task_id);
+      } catch (error) {
+        $("runBtn").disabled = false;
+        setStatus(error.message, "error");
+      }
+    }
+
+    async function pollTask(taskId) {
+      const response = await fetch(`/api/task/status/${taskId}`);
+      const result = await response.json();
+      if (!response.ok) {
+        clearInterval(pollTimer);
+        $("runBtn").disabled = false;
+        setStatus(result.detail || "状态查询失败", "error");
+        return;
+      }
+      if (result.status === "completed") {
+        clearInterval(pollTimer);
+        await loadResult(taskId);
+      } else if (result.status === "failed") {
+        clearInterval(pollTimer);
+        $("runBtn").disabled = false;
+        setStatus(result.message || "任务失败", "error");
+      } else {
+        setStatus(result.message || `任务状态：${result.status}`, "");
+      }
+    }
+
+    async function loadResult(taskId) {
+      const response = await fetch(`/api/task/result/${taskId}`);
+      const result = await response.json();
+      $("runBtn").disabled = false;
+      if (!response.ok) {
+        setStatus(result.detail || "读取结果失败", "error");
+        return;
+      }
+      renderRows(result.data || []);
+      renderLogs(result.logs || []);
+      $("downloadBtn").href = `/api/task/download/${taskId}`;
+      $("downloadBtn").style.display = "inline-flex";
+      setStatus(result.message || "采集完成", "ok");
+    }
+
+    $("runBtn").addEventListener("click", startTask);
+    $("sampleBtn").addEventListener("click", loadSample);
+  </script>
+</body>
+</html>
