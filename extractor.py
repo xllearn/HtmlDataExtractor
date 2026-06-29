@@ -1,19 +1,20 @@
 import re
-from io import StringIO
 from datetime import datetime
 from typing import Any, Dict, List, Sequence, Tuple
 
-import pandas as pd
 from bs4 import BeautifulSoup
 
 from cleaner import clean_text, normalize_date, normalize_record
-from columns import TARGET_COLUMNS
+from columns import BASE_COLUMNS, TARGET_COLUMNS
 from llm_extractor import LLMConfig, call_llm, evidence_rows, load_llm_config
+from record_fusion import fuse_rule_and_llm_records
+from table_extractor import combine_table_results, extract_html_tables, extract_text_tables
 
 
 HEADER_ALIASES = {
     "发布时间": "文章时间",
     "发布日期": "文章时间",
+    "发文时间": "文章时间",
     "文章时间": "文章时间",
     "审核时间": "审核日期",
     "审核日期": "审核日期",
@@ -27,9 +28,13 @@ HEADER_ALIASES = {
     "病种": "病种名称",
     "疾病名称": "病种名称",
     "病种名称": "病种名称",
+    "药品名称": "病种名称",
+    "项目名称": "病种名称",
     "待遇类型": "类型",
     "类型": "类型",
+    "剂型": "类型",
     "标化类型": "标化类型",
+    "类别": "标化类型",
     "保险": "保险类型",
     "险种": "保险类型",
     "保险类型": "保险类型",
@@ -39,12 +44,15 @@ HEADER_ALIASES = {
     "就诊地域": "就诊地域",
     "医院类型": "医院类型",
     "医院级别": "医院类型",
+    "医院等级": "医院类型",
     "就诊情况": "就诊情况",
     "区间": "区间",
+    "费用区间": "区间",
     "起付标准": "起付标准",
     "起付线": "起付标准",
     "补助限额": "补助限额",
     "支付限额": "补助限额",
+    "年度限额": "补助限额",
     "报销比例": "报销比例",
     "支付比例": "报销比例",
     "备注": "备注",
@@ -59,21 +67,16 @@ HEADER_ALIASES = {
 
 SEMANTIC_GROUPS = {
     "医保": ["医保", "医疗保险", "基本医疗保险", "职工医保", "居民医保"],
-    "报销": ["报销", "支付比例", "待遇", "补助", "起付", "限额"],
-    "门诊": ["门诊", "门诊统筹", "慢特病", "门诊慢特病"],
+    "医疗保险": ["医保", "医疗保险", "基本医疗保险", "职工医保", "居民医保"],
+    "门诊": ["门诊", "门诊统筹", "慢特病", "门诊慢特病", "两病"],
+    "慢特病": ["慢特病", "门诊慢特病", "门诊"],
+    "两病": ["两病", "高血压", "糖尿病", "门诊用药"],
     "住院": ["住院", "入院", "出院"],
-    "商业补充保险": ["商业补充保险", "补充保险", "商保"],
+    "报销": ["报销", "报销比例", "支付比例", "待遇"],
+    "补助": ["补助", "补助限额", "限额"],
+    "起付": ["起付", "起付标准", "起付线"],
+    "限额": ["限额", "补助限额", "支付限额"],
 }
-
-
-def normalize_header(value: Any) -> str:
-    text = re.sub(r"\s+", "", clean_text(value).replace("：", "").replace(":", ""))
-    if text in TARGET_COLUMNS:
-        return text
-    for alias, target in HEADER_ALIASES.items():
-        if alias in text:
-            return target
-    return clean_text(value)
 
 
 def blank_record(columns: Sequence[str]) -> Dict[str, str]:
@@ -81,7 +84,7 @@ def blank_record(columns: Sequence[str]) -> Dict[str, str]:
 
 
 def keyword_terms(keyword: str) -> List[str]:
-    parts = [part for part in re.split(r"[\s,，、]+", keyword.strip()) if part]
+    parts = [part for part in re.split(r"[\s,，、;；]+", keyword.strip()) if part]
     terms = set(parts)
     for part in parts:
         for key, synonyms in SEMANTIC_GROUPS.items():
@@ -94,7 +97,7 @@ def is_relevant(text: str, keyword: str) -> bool:
     if not keyword.strip():
         return True
     haystack = clean_text(text)
-    return any(term in haystack for term in keyword_terms(keyword))
+    return any(term and term in haystack for term in keyword_terms(keyword))
 
 
 def html_to_text(html: str) -> str:
@@ -105,6 +108,7 @@ def html_to_text(html: str) -> str:
 
 def db_base_fields(record: Dict[str, Any], columns: Sequence[str]) -> Dict[str, str]:
     base = blank_record(columns)
+    base["source_id"] = clean_text(record.get("source_id"))
     base["info_id"] = clean_text(record.get("info_id"))
     base["文章时间"] = normalize_date(record.get("article_time"))
     base["审核日期"] = normalize_date(record.get("audit_time"))
@@ -113,32 +117,10 @@ def db_base_fields(record: Dict[str, Any], columns: Sequence[str]) -> Dict[str, 
     for column, value in (record.get("direct_fields") or {}).items():
         if column in columns and not clean_text(base.get(column)):
             base[column] = clean_text(value)
-    if not clean_text(base.get("保险类型")) and clean_text(record.get("raw", {}).get("insurancetypename")):
-        base["保险类型"] = clean_text(record.get("raw", {}).get("insurancetypename"))
+    raw = record.get("raw") or {}
+    if not clean_text(base.get("保险类型")) and clean_text(raw.get("insurancetypename")):
+        base["保险类型"] = clean_text(raw.get("insurancetypename"))
     return base
-
-
-def table_records(html: str, base: Dict[str, str], columns: Sequence[str]) -> List[Dict[str, str]]:
-    if not html.strip():
-        return []
-    records: List[Dict[str, str]] = []
-    try:
-        tables = pd.read_html(StringIO(html))
-    except ValueError:
-        tables = []
-    for table in tables:
-        table.columns = [normalize_header(column) for column in table.columns]
-        mapped_columns = [column for column in table.columns if column in columns]
-        if not mapped_columns:
-            continue
-        for _, row in table.iterrows():
-            item = dict(base)
-            for column in mapped_columns:
-                value = clean_text(row.get(column))
-                if value:
-                    item[column] = value
-            records.append(normalize_record(item, columns))
-    return records
 
 
 def key_value_fields(text: str, columns: Sequence[str]) -> Dict[str, str]:
@@ -155,8 +137,7 @@ def key_value_fields(text: str, columns: Sequence[str]) -> Dict[str, str]:
     target_by_key = {key: target for key, target in candidates}
     matches = list(re.finditer(rf"(?P<key>{key_pattern})\s*[:：]", compact))
     for index, match in enumerate(matches):
-        raw_key = match.group("key")
-        target = target_by_key.get(raw_key)
+        target = target_by_key.get(match.group("key"))
         if target not in columns:
             continue
         start = match.end()
@@ -169,52 +150,48 @@ def key_value_fields(text: str, columns: Sequence[str]) -> Dict[str, str]:
 
 def infer_fields(text: str, columns: Sequence[str]) -> Dict[str, str]:
     record = blank_record(columns)
-    if "职工" in text:
-        record["保险类型"] = "职工医保"
-    elif "居民" in text:
-        record["保险类型"] = "居民医保"
-    if "门诊" in text:
-        record["类型"] = record["类型"] or "门诊"
+    if "城乡居民" in text or "居民医保" in text:
+        record["保险类型"] = "城乡居民"
+    elif "职工" in text:
+        record["保险类型"] = "城镇职工"
+    if "两病" in text:
+        record["病种类型"] = "两病"
+        record["就诊情况"] = record["就诊情况"] or "门诊"
+    elif "门诊" in text:
+        record["就诊情况"] = "门诊"
     elif "住院" in text:
-        record["类型"] = record["类型"] or "住院"
-    date_match = re.search(r"(?:发布时间|发布日期|文章时间)\s*[:：]?\s*(20\d{2}[年/\-.]\d{1,2}[月/\-.]\d{1,2})", text)
+        record["就诊情况"] = "住院"
+    if "高血压" in text and not record["病种名称"]:
+        record["病种名称"] = "高血压"
+    date_match = re.search(r"(?:发布时间|发布日期|文章时间)\s*[:：]?\s*(20\d{2}[年/\-.]\d{1,2}[月/\-.]\d{1,2}|20\d{6})", text)
     if date_match:
         record["文章时间"] = normalize_date(date_match.group(1))
-    audit_match = re.search(r"(?:审核日期|审核时间)\s*[:：]?\s*(20\d{2}[年/\-.]\d{1,2}[月/\-.]\d{1,2})", text)
+    audit_match = re.search(r"(?:审核日期|审核时间)\s*[:：]?\s*(20\d{2}[年/\-.]\d{1,2}[月/\-.]\d{1,2}|20\d{6})", text)
     if audit_match:
         record["审核日期"] = normalize_date(audit_match.group(1))
     return record
 
 
-def has_business_value(record: Dict[str, str]) -> bool:
+def merge_records(base: Dict[str, str], extracted: Dict[str, Any], columns: Sequence[str]) -> Dict[str, str]:
+    merged = blank_record(columns)
+    for column in columns:
+        if column in BASE_COLUMNS and clean_text(base.get(column)):
+            merged[column] = clean_text(base.get(column))
+        else:
+            merged[column] = clean_text(extracted.get(column)) or clean_text(base.get(column))
+    return normalize_record(merged, columns)
+
+
+def has_business_value(record: Dict[str, Any]) -> bool:
     ignored = {"文章时间", "审核日期", "info_id", "地区名称", "相关资讯", "审核状态0待审核1已审核", "是否需要手动修改执行状态(1是0否)"}
-    return any(clean_text(value) for key, value in record.items() if key not in ignored)
+    return any(clean_text(value) for key, value in record.items() if key not in ignored and key in TARGET_COLUMNS)
 
 
-def merge_records(base: Dict[str, str], extracted: Dict[str, str], columns: Sequence[str]) -> Dict[str, str]:
-    merged = blank_record(columns)
-    for column in columns:
-        merged[column] = clean_text(base.get(column)) or clean_text(extracted.get(column))
-    return normalize_record(merged, columns)
-
-
-def merge_llm_record(base: Dict[str, str], rule: Dict[str, str], llm: Dict[str, str], columns: Sequence[str]) -> Dict[str, str]:
-    merged = blank_record(columns)
-    for column in columns:
-        merged[column] = clean_text(base.get(column)) or clean_text(llm.get(column)) or clean_text(rule.get(column))
-    return normalize_record(merged, columns)
-
-
-def has_conflict(rule: Dict[str, str], llm: Dict[str, str], columns: Sequence[str]) -> bool:
-    metadata_fields = {"info_id", "文章时间", "审核日期", "地区名称", "相关资讯"}
-    for column in columns:
-        if column in metadata_fields:
-            continue
-        rule_value = clean_text(rule.get(column))
-        llm_value = clean_text(llm.get(column))
-        if rule_value and llm_value and rule_value != llm_value:
-            return True
-    return False
+def image_only_review_needed(html: str, text: str) -> bool:
+    if clean_text(text):
+        return False
+    soup = BeautifulSoup(html or "", "lxml")
+    return bool(soup.find("img")) and not clean_text(soup.get_text(" ", strip=True))
 
 
 def extract_record(
@@ -224,14 +201,18 @@ def extract_record(
     use_llm: bool | None = None,
     llm_config: LLMConfig | None = None,
     llm_config_path: str = "config/llm_config.yml",
-) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+    table_mapping_path: str = "config/table_mapping.yml",
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     columns = list(columns or TARGET_COLUMNS)
     html = clean_text(record.get("html"))
-    text = clean_text(record.get("text"))
-    content = html_to_text(html) if html else text
+    raw_text = "" if record.get("text") is None else str(record.get("text"))
+    text = clean_text(raw_text)
+    html_text = html_to_text(html) if html else ""
+    content = html_text or text
     combined_text = " ".join([clean_text(record.get("title")), content, text])
-    log = {
-        "source_id": clean_text(record.get("source_id")),
+    source_id = clean_text(record.get("source_id"))
+    log: Dict[str, Any] = {
+        "source_id": source_id,
         "info_id": clean_text(record.get("info_id")),
         "title": clean_text(record.get("title")),
         "status": "success",
@@ -245,27 +226,49 @@ def extract_record(
         "llm_error": "",
         "need_manual_review": False,
         "review_reason": "",
+        "table_count": 0,
+        "table_row_count": 0,
+        "extraction_mode": "",
         "field_evidence": [],
+        "conflict_evidence": [],
     }
-    if not combined_text.strip():
-        log.update({"status": "empty_content", "message": "html and text are empty"})
+    if not combined_text.strip() and not html.strip():
+        log.update({"status": "empty_content", "message": "html and text are empty", "extraction_mode": "empty_content"})
+        return [], log
+    if image_only_review_needed(html, text):
+        log.update(
+            {
+                "status": "empty_content",
+                "message": "image-only content",
+                "need_manual_review": True,
+                "review_reason": "疑似图片表格，数据库正文缺少可解析文本，需 OCR 或人工复核",
+                "extraction_mode": "empty_content",
+            }
+        )
         return [], log
     if not is_relevant(combined_text, keyword):
-        log.update({"status": "skipped_keyword", "message": "keyword not matched"})
+        log.update({"status": "skipped_keyword", "message": "keyword not matched", "extraction_mode": "skipped_keyword"})
         return [], log
 
     base = db_base_fields(record, columns)
-    extracted_records = table_records(html, base, columns)
-    if not extracted_records:
+    html_tables = extract_html_tables(html, base, columns, table_mapping_path, source_id)
+    text_tables = extract_text_tables(raw_text or html_text, base, columns, table_mapping_path, source_id)
+    table_result = combine_table_results(html_tables, text_tables)
+    log["table_count"] = table_result.table_count
+    log["table_row_count"] = table_result.table_row_count
+    log["field_evidence"] = list(table_result.field_evidence)
+
+    if table_result.records:
+        rule_records = [merge_records(base, item, columns) for item in table_result.records]
+        extraction_mode = table_result.extraction_mode or "table_html"
+    else:
         extracted = key_value_fields(combined_text, columns)
         inferred = infer_fields(combined_text, columns)
-        extracted_records = [merge_records(base, {**inferred, **{k: v for k, v in extracted.items() if v}}, columns)]
+        merged = merge_records(base, {**inferred, **{k: v for k, v in extracted.items() if v}}, columns)
+        rule_records = [merged] if has_business_value(merged) else []
+        extraction_mode = "key_value" if rule_records else "empty_content"
 
-    final_records = [merge_records(base, item, columns) for item in extracted_records]
-    final_records = [item for item in final_records if has_business_value(item)]
-    if not final_records:
-        final_records = [normalize_record(base, columns)]
-
+    final_records: List[Dict[str, Any]] = [item for item in rule_records if has_business_value(item)]
     should_call_llm = use_llm is not False
     if should_call_llm and len(combined_text) >= 20:
         config = llm_config or load_llm_config(llm_config_path)
@@ -278,40 +281,37 @@ def extract_record(
         if llm_result.error and not llm_result.used:
             log["message"] = llm_result.error
         if llm_result.success:
-            log["need_manual_review"] = llm_result.need_manual_review
-            log["review_reason"] = llm_result.review_reason
-            if llm_result.records:
-                conflicts = any(
-                    has_conflict(final_records[min(index, len(final_records) - 1)], llm_record, columns)
-                    for index, llm_record in enumerate(llm_result.records)
-                    if final_records
+            llm_records = [merge_records(base, item, columns) for item in llm_result.records]
+            final_records, conflicts = fuse_rule_and_llm_records(base, final_records, llm_records, columns)
+            if llm_records:
+                extraction_mode = "rule_llm_fusion" if rule_records else "llm_only"
+                log["field_evidence"].extend(
+                    evidence_rows(source_id, clean_text(record.get("info_id")), final_records, llm_result.evidence, llm_result.confidence, "llm", llm_result.model)
                 )
-                fused_records = []
-                for index, llm_record in enumerate(llm_result.records):
-                    rule_record = final_records[min(index, len(final_records) - 1)] if final_records else blank_record(columns)
-                    fused_records.append(merge_llm_record(base, rule_record, llm_record, columns))
-                final_records = [item for item in fused_records if has_business_value(item)] or final_records
-                if conflicts:
-                    log["need_manual_review"] = True
-                    reason = "规则结果与 LLM 结果存在字段冲突"
-                    log["review_reason"] = f"{log['review_reason']}; {reason}".strip("; ")
-                log["field_evidence"] = evidence_rows(
-                    clean_text(record.get("source_id")),
-                    clean_text(record.get("info_id")),
-                    final_records,
-                    llm_result.evidence,
-                    llm_result.confidence,
-                    "llm",
-                    llm_result.model,
-                )
-            elif llm_result.need_manual_review and not any(has_business_value(item) for item in final_records):
+            if conflicts:
+                log["conflict_evidence"].extend(conflicts)
+            if llm_result.need_manual_review:
                 log["need_manual_review"] = True
-                log["review_reason"] = llm_result.review_reason or "LLM 未抽取到结构化记录"
+                log["review_reason"] = llm_result.review_reason
         elif llm_result.used:
             log["need_manual_review"] = True
             log["review_reason"] = llm_result.error or "LLM 调用失败，已回退规则结果"
+            if not log["message"]:
+                log["message"] = log["review_reason"]
     elif should_call_llm:
         log["message"] = "content too short for LLM; using rule extraction"
 
+    for item in final_records:
+        if item.get("need_manual_review"):
+            log["need_manual_review"] = True
+            reason = clean_text(item.get("review_reason"))
+            if reason:
+                log["review_reason"] = "；".join(part for part in [clean_text(log.get("review_reason")), reason] if part)
+    final_records = [normalize_record(item, columns) for item in final_records if has_business_value(item)]
+    if not final_records:
+        log["status"] = "empty_content"
+        log["message"] = log["message"] or "no extractable business data"
+        extraction_mode = "empty_content"
     log["records"] = len(final_records)
+    log["extraction_mode"] = extraction_mode
     return final_records, log

@@ -8,9 +8,9 @@ import yaml
 from sqlalchemy import MetaData, String, and_, bindparam, cast, create_engine, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from cleaner import clean_text
 from columns import TARGET_COLUMNS
 from extractor import html_to_text
-from cleaner import clean_text
 
 
 @dataclass(frozen=True)
@@ -36,8 +36,9 @@ FIELD_MAP = {
 KEYWORD_SYNONYMS = {
     "医保": ["医保", "医疗保险", "基本医疗保险", "职工医保", "居民医保"],
     "医疗保险": ["医保", "医疗保险", "基本医疗保险", "职工医保", "居民医保"],
-    "门诊": ["门诊", "门诊统筹", "慢特病", "门诊慢特病"],
+    "门诊": ["门诊", "门诊统筹", "慢特病", "门诊慢特病", "两病"],
     "慢特病": ["慢特病", "门诊慢特病", "门诊"],
+    "两病": ["两病", "高血压", "糖尿病", "门诊用药"],
     "住院": ["住院", "入院", "出院"],
     "报销": ["报销", "报销比例", "支付比例", "待遇"],
     "待遇": ["待遇", "报销", "补助"],
@@ -68,7 +69,7 @@ def load_db_config(path: str | Path = "config/db_config.yml") -> DatabaseConfig:
         raise ValueError("database.url is required")
     if not source.get("table"):
         raise ValueError("source.table is required")
-    direct_fields = {str(key): str(value or "") for key, value in direct.items() if key in TARGET_COLUMNS}
+    direct_fields = {str(key): str(value or "") for key, value in direct.items() if key in TARGET_COLUMNS and str(value or "")}
     return DatabaseConfig(
         url=url,
         source={str(k): str(v or "") for k, v in source.items()},
@@ -92,12 +93,10 @@ def _table(config: DatabaseConfig):
 
 
 def identity_column_name(config: DatabaseConfig) -> str:
-    id_column = config.source.get("id_column", "")
-    info_id_column = config.source.get("info_id_column", "")
-    if id_column:
-        return id_column
-    if info_id_column:
-        return info_id_column
+    if config.source.get("id_column"):
+        return config.source["id_column"]
+    if config.source.get("info_id_column"):
+        return config.source["info_id_column"]
     raise RuntimeError("source.id_column or source.info_id_column is required for stable source_id")
 
 
@@ -123,26 +122,14 @@ def _selected_columns(config: DatabaseConfig, table) -> Tuple[List[Any], Dict[st
     return selected, labels
 
 
-def _base_statement(config: DatabaseConfig, table, selected: List[Any]):
-    statement = select(*selected)
-    for condition in _configured_conditions(config):
-        statement = statement.where(condition)
-    return _apply_order_by(statement, config)
-
-
 def _configured_conditions(config: DatabaseConfig) -> List[Any]:
-    conditions = []
     where_clause = str(config.query.get("where") or "").strip()
-    if where_clause:
-        conditions.append(text(where_clause))
-    return conditions
+    return [text(where_clause)] if where_clause else []
 
 
 def _apply_order_by(statement, config: DatabaseConfig):
     order_by = str(config.query.get("order_by") or "").strip()
-    if order_by:
-        statement = statement.order_by(text(order_by))
-    return statement
+    return statement.order_by(text(order_by)) if order_by else statement
 
 
 def _query_limit(config: DatabaseConfig) -> int | None:
@@ -152,8 +139,15 @@ def _query_limit(config: DatabaseConfig) -> int | None:
     return max(int(limit), 0)
 
 
+def _base_statement(config: DatabaseConfig, table, selected: List[Any]):
+    statement = select(*selected)
+    for condition in _configured_conditions(config):
+        statement = statement.where(condition)
+    return _apply_order_by(statement, config)
+
+
 def keyword_terms(keyword: str) -> List[List[str]]:
-    parts = [part for part in re.split(r"[\s,，、]+", clean_text(keyword)) if part]
+    parts = [part for part in re.split(r"[\s,，、;；]+", clean_text(keyword)) if part]
     groups = []
     for part in parts:
         terms = KEYWORD_SYNONYMS.get(part, [part])
@@ -165,7 +159,6 @@ def _keyword_conditions(config: DatabaseConfig, keyword: str, table, labels: Dic
     groups = keyword_terms(keyword)
     if not groups:
         return [], {}
-
     columns = []
     for standard_key in ("title", "text", "html", "info_id", "region", "related_info"):
         column_name = labels.get(standard_key)
@@ -200,27 +193,9 @@ def _to_standard(row: Dict[str, Any], labels: Dict[str, str], fallback_index: in
     return standard
 
 
-def _matches_keyword(record: Dict[str, Any], keyword: str) -> bool:
-    if not keyword.strip():
-        return True
-    haystack = " ".join(
-        [
-            clean_text(record.get("source_id")),
-            clean_text(record.get("info_id")),
-            clean_text(record.get("title")),
-            clean_text(record.get("region")),
-            clean_text(record.get("related_info")),
-            html_to_text(clean_text(record.get("html"))),
-            clean_text(record.get("text")),
-        ]
-    )
-    return keyword in haystack
-
-
 def _preview(record: Dict[str, Any], max_length: int = 200) -> str:
     text_value = clean_text(record.get("text")) or html_to_text(clean_text(record.get("html")))
-    text_value = re.sub(r"\s+", " ", text_value).strip()
-    return text_value[:max_length]
+    return re.sub(r"\s+", " ", text_value).strip()[:max_length]
 
 
 def read_records(config: DatabaseConfig) -> List[Dict[str, Any]]:
@@ -230,7 +205,6 @@ def read_records(config: DatabaseConfig) -> List[Dict[str, Any]]:
     limit = _query_limit(config)
     if limit is not None:
         statement = statement.limit(limit)
-
     records: List[Dict[str, Any]] = []
     try:
         with engine.connect() as conn:
@@ -258,55 +232,49 @@ def read_record_page(config: DatabaseConfig, keyword: str = "", page: int = 1, p
     statement = select(*selected)
     for condition in conditions:
         statement = statement.where(condition)
-    statement = _apply_order_by(statement, config)
+    statement = _apply_order_by(statement, config).offset(offset).limit(page_size)
 
     try:
         with engine.connect() as conn:
-            total = int(conn.execute(count_statement, keyword_params).scalar_one() or 0)
+            total = int(conn.execute(count_statement, keyword_params).scalar() or 0)
             if configured_limit is not None:
                 total = min(total, configured_limit)
-            if configured_limit is not None and offset >= configured_limit:
-                page_records = []
-            else:
-                effective_limit = page_size
-                if configured_limit is not None:
-                    effective_limit = min(page_size, configured_limit - offset)
-                rows = conn.execute(statement.limit(effective_limit).offset(offset), keyword_params).mappings()
-                page_records = [_to_standard(dict(row), labels, index + offset) for index, row in enumerate(rows, start=1)]
+            rows = [dict(row) for row in conn.execute(statement, keyword_params).mappings()]
     except SQLAlchemyError as exc:
         raise RuntimeError(f"Database page query failed: {exc}") from exc
 
-    return {
-        "total": total,
-        "records": [
+    records = []
+    for index, row in enumerate(rows, start=offset + 1):
+        standard = _to_standard(row, labels, index)
+        preview = _preview(standard)
+        records.append(
             {
-                "source_id": record.get("source_id", ""),
-                "info_id": record.get("info_id", ""),
-                "title": record.get("title", ""),
-                "article_time": record.get("article_time", ""),
-                "audit_time": record.get("audit_time", ""),
-                "region": record.get("region", ""),
-                "related_info": record.get("related_info", ""),
-                "content_preview": _preview(record),
+                "source_id": standard["source_id"],
+                "info_id": clean_text(standard.get("info_id")),
+                "title": clean_text(standard.get("title")),
+                "article_time": clean_text(standard.get("article_time")),
+                "audit_time": clean_text(standard.get("audit_time")),
+                "region": clean_text(standard.get("region")),
+                "related_info": clean_text(standard.get("related_info")),
+                "content_preview": preview,
             }
-            for record in page_records
-        ],
-    }
+        )
+    return {"total": total, "records": records}
 
 
 def read_records_by_ids(config: DatabaseConfig, selected_ids: List[str]) -> List[Dict[str, Any]]:
-    selected_ids = [clean_text(item) for item in selected_ids if clean_text(item)]
     if not selected_ids:
         return []
     engine, table = _table(config)
-    identity_name = identity_column_name(config)
-    if identity_name not in table.c:
-        raise RuntimeError(f"Configured identity column does not exist: {identity_name}")
     selected, labels = _selected_columns(config, table)
-    statement = _base_statement(config, table, selected).where(table.c[identity_name].in_(bindparam("selected_ids", expanding=True)))
+    id_name = identity_column_name(config)
+    if id_name not in table.c:
+        raise RuntimeError(f"Configured identity column does not exist: {id_name}")
+    statement = select(*selected).where(cast(table.c[id_name], String).in_([str(item) for item in selected_ids]))
+    statement = _apply_order_by(statement, config)
     try:
         with engine.connect() as conn:
-            rows = conn.execute(statement, {"selected_ids": selected_ids}).mappings()
-            return [_to_standard(dict(row), labels, index) for index, row in enumerate(rows, start=1)]
+            rows = [dict(row) for row in conn.execute(statement).mappings()]
     except SQLAlchemyError as exc:
-        raise RuntimeError(f"Database query failed for selected records: {exc}") from exc
+        raise RuntimeError(f"Database selected-id query failed: {exc}") from exc
+    return [_to_standard(row, labels, index) for index, row in enumerate(rows, start=1)]

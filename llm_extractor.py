@@ -9,13 +9,12 @@ import yaml
 from bs4 import BeautifulSoup
 
 from cleaner import clean_text, normalize_record
-from columns import TARGET_COLUMNS
+from columns import DEFAULT_ZERO_COLUMNS, TARGET_COLUMNS
 
 
 DEFAULT_SYSTEM_PROMPT = "你是医保、商保、政策待遇文本结构化抽取助手。请严格输出 JSON。"
 DEFAULT_USER_PROMPT = "请从下面这条数据库文章记录中抽取固定 26 列 Excel 数据。请严格返回 JSON。"
 EVIDENCE_FIELDS = {"报销比例", "起付标准", "补助限额", "区间", "人员类型", "医院类型", "就诊地域", "就诊情况"}
-DB_PRIORITY_FIELDS = {"info_id", "文章时间", "审核日期", "地区名称", "相关资讯"}
 
 
 def html_to_text(html: str) -> str:
@@ -80,11 +79,6 @@ def load_llm_config(path: str | Path = "config/llm_config.yml") -> LLMConfig:
     )
 
 
-def deepseek_api_key() -> str:
-    local_value = local_env_value("DEEPSEEK_API_KEY", os.getenv("HTMLDATAEXTRACTOR_ENV_FILE", ".env.local"))
-    return local_value or os.getenv("DEEPSEEK_API_KEY", "").strip()
-
-
 def local_env_value(name: str, path: str | Path = ".env.local") -> str:
     env_path = Path(path)
     if not env_path.exists():
@@ -100,6 +94,11 @@ def local_env_value(name: str, path: str | Path = ".env.local") -> str:
     except OSError:
         return ""
     return ""
+
+
+def deepseek_api_key() -> str:
+    local_value = local_env_value("DEEPSEEK_API_KEY", os.getenv("HTMLDATAEXTRACTOR_ENV_FILE", ".env.local"))
+    return local_value or os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 
 def llm_available(config: LLMConfig) -> tuple[bool, str]:
@@ -149,15 +148,10 @@ def parse_llm_response(value: Any, columns: Sequence[str] | None = None) -> LLMP
 
     records = []
     for item in raw_records:
-        if not isinstance(item, dict):
-            continue
-        records.append(normalize_record({column: item.get(column, "") for column in columns}, columns))
+        if isinstance(item, dict):
+            records.append(normalize_record({column: item.get(column, "") for column in columns}, columns))
 
-    evidence = {
-        str(field): clean_text(text)
-        for field, text in (data.get("evidence") or {}).items()
-        if field in columns and clean_text(text)
-    }
+    evidence = {str(field): clean_text(text) for field, text in (data.get("evidence") or {}).items() if field in columns and clean_text(text)}
     confidence: Dict[str, float] = {}
     for field, score in (data.get("confidence") or {}).items():
         if field not in columns:
@@ -180,7 +174,7 @@ def parse_llm_response(value: Any, columns: Sequence[str] | None = None) -> LLMP
 def output_schema(columns: Sequence[str] | None = None) -> Dict[str, Any]:
     columns = list(columns or TARGET_COLUMNS)
     return {
-        "records": [{column: "0" if column in {"审核状态0待审核1已审核", "是否需要手动修改执行状态(1是0否)"} else "" for column in columns}],
+        "records": [{column: "0" if column in DEFAULT_ZERO_COLUMNS else "" for column in columns}],
         "evidence": {field: "原文证据片段" for field in sorted(EVIDENCE_FIELDS)},
         "confidence": {field: 0.0 for field in sorted(EVIDENCE_FIELDS)},
         "need_manual_review": False,
@@ -195,7 +189,7 @@ def compact_text(record: Dict[str, Any], max_chars: int) -> str:
     combined = "\n".join(part for part in [title, text, html_text] if part)
     if len(combined) <= max_chars:
         return combined
-    keywords = ["报销", "起付", "限额", "门诊", "住院", "个人账户", "病种", "医院", "待遇", "补助"]
+    keywords = ["报销", "起付", "限额", "门诊", "住院", "个人账户", "病种", "医院", "待遇", "补助", "目录", "药品"]
     paragraphs = re.split(r"[\r\n。；;]+", combined)
     selected = [title] if title else []
     selected.extend(paragraph for paragraph in paragraphs if any(keyword in paragraph for keyword in keywords))
@@ -225,11 +219,7 @@ def render_user_prompt(template: str, record: Dict[str, Any], columns: Sequence[
     record_json = json.dumps(payload, ensure_ascii=False, indent=2)
     columns_json = json.dumps(list(columns), ensure_ascii=False, indent=2)
     schema_json = json.dumps(output_schema(columns), ensure_ascii=False, indent=2)
-    prompt = (
-        template.replace("{{record_json}}", record_json)
-        .replace("{{target_columns_json}}", columns_json)
-        .replace("{{schema_json}}", schema_json)
-    )
+    prompt = template.replace("{{record_json}}", record_json).replace("{{target_columns_json}}", columns_json).replace("{{schema_json}}", schema_json)
     return prompt, len(record_json)
 
 
@@ -243,37 +233,17 @@ def call_llm(record: Dict[str, Any], columns: Sequence[str], config: LLMConfig) 
     try:
         from openai import OpenAI
 
-        client = OpenAI(
-            api_key=deepseek_api_key(),
-            base_url=config.base_url,
-            timeout=config.timeout_seconds,
-            max_retries=config.max_retries,
-        )
+        client = OpenAI(api_key=deepseek_api_key(), base_url=config.base_url, timeout=config.timeout_seconds, max_retries=config.max_retries)
         response = client.chat.completions.create(
             model=config.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
             temperature=config.temperature,
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content or ""
-        parsed = parse_llm_response(content, columns)
-        return LLMCallResult(
-            **parsed.__dict__,
-            used=True,
-            model=config.model,
-            input_chars=input_chars,
-        )
+        parsed = parse_llm_response(response.choices[0].message.content or "", columns)
+        return LLMCallResult(**parsed.__dict__, used=True, model=config.model, input_chars=input_chars)
     except Exception as exc:
-        return LLMCallResult(
-            success=False,
-            used=True,
-            model=config.model,
-            input_chars=input_chars,
-            error=f"LLM request failed: {exc}",
-        )
+        return LLMCallResult(success=False, used=True, model=config.model, input_chars=input_chars, error=f"LLM request failed: {exc}")
 
 
 def evidence_rows(
@@ -286,12 +256,13 @@ def evidence_rows(
     rule_name: str,
 ) -> List[Dict[str, Any]]:
     rows = []
-    for field_name, evidence_text in evidence.items():
-        for record in records or [{}]:
+    for row_index, record in enumerate(records or [{}]):
+        for field_name, evidence_text in evidence.items():
             rows.append(
                 {
                     "source_id": source_id,
                     "info_id": info_id,
+                    "row_index": row_index,
                     "field": field_name,
                     "value": record.get(field_name, ""),
                     "evidence": evidence_text,

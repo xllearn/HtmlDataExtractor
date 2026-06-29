@@ -9,6 +9,28 @@ from extractor import extract_record
 from llm_extractor import llm_available, load_llm_config
 
 
+SUMMARY_KEYS = [
+    "read_count",
+    "selected_count",
+    "success_count",
+    "failed_count",
+    "skipped_count",
+    "empty_count",
+    "manual_review_count",
+    "llm_success_count",
+    "llm_failed_count",
+    "output_file",
+]
+
+
+def summary_defaults(summary: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    source = summary or {}
+    result = {key: 0 for key in SUMMARY_KEYS if key != "output_file"}
+    result["output_file"] = ""
+    result.update({key: source.get(key, result[key]) for key in SUMMARY_KEYS})
+    return result
+
+
 def run_pipeline(
     config_path: str | Path = "config/db_config.yml",
     field_config_path: str | Path = "config/field_mapping.yml",
@@ -18,6 +40,7 @@ def run_pipeline(
     selected_ids: List[str] | None = None,
     use_llm: bool | None = None,
     llm_config_path: str | Path = "config/llm_config.yml",
+    table_mapping_path: str | Path = "config/table_mapping.yml",
 ) -> Dict[str, Any]:
     db_config = load_db_config(config_path)
     field_mapping = load_field_mapping(field_config_path)
@@ -29,6 +52,8 @@ def run_pipeline(
 
     extracted: List[Dict[str, Any]] = []
     logs: List[Dict[str, Any]] = []
+    field_evidence: List[Dict[str, Any]] = []
+    conflict_evidence: List[Dict[str, Any]] = []
     for db_record in db_records:
         try:
             records, log = extract_record(
@@ -38,9 +63,12 @@ def run_pipeline(
                 use_llm=use_llm,
                 llm_config=llm_config,
                 llm_config_path=str(llm_config_path),
+                table_mapping_path=str(table_mapping_path),
             )
             extracted.extend(records)
             logs.append(log)
+            field_evidence.extend(log.get("field_evidence") or [])
+            conflict_evidence.extend(log.get("conflict_evidence") or [])
         except Exception as exc:
             logs.append(
                 {
@@ -52,39 +80,54 @@ def run_pipeline(
                     "records": 0,
                     "llm_used": False,
                     "llm_success": False,
+                    "llm_error": "",
                     "need_manual_review": True,
                     "review_reason": str(exc),
+                    "table_count": 0,
+                    "table_row_count": 0,
+                    "extraction_mode": "failed",
                 }
             )
 
     cleaned = clean_records(extracted, field_mapping)
-    output_file = write_excel(cleaned, logs, output_path, field_mapping.output_columns, template_path=template_path)
-    return {
-        "read_count": len(db_records),
-        "selected_count": len(selected_ids or []),
-        "success_count": sum(1 for log in logs if log.get("status") == "success"),
-        "failed_count": sum(1 for log in logs if log.get("status") == "failed"),
-        "skipped_count": sum(1 for log in logs if log.get("status") == "skipped_keyword"),
-        "empty_count": sum(1 for log in logs if log.get("status") == "empty_content"),
-        "manual_review_count": sum(1 for log in logs if log.get("need_manual_review")),
-        "llm_success_count": sum(1 for log in logs if log.get("llm_success")),
-        "llm_failed_count": sum(1 for log in logs if log.get("llm_used") and not log.get("llm_success")),
-        "output_file": output_file,
-        "records": cleaned,
-        "logs": logs,
-    }
+    output_file = write_excel(
+        cleaned,
+        logs,
+        output_path,
+        field_mapping.output_columns,
+        template_path=template_path,
+        field_evidence=field_evidence,
+        conflict_evidence=conflict_evidence,
+    )
+    summary = summary_defaults(
+        {
+            "read_count": len(db_records),
+            "selected_count": len(selected_ids or []),
+            "success_count": sum(1 for log in logs if log.get("status") == "success"),
+            "failed_count": sum(1 for log in logs if log.get("status") == "failed"),
+            "skipped_count": sum(1 for log in logs if log.get("status") == "skipped_keyword"),
+            "empty_count": sum(1 for log in logs if log.get("status") == "empty_content"),
+            "manual_review_count": sum(1 for log in logs if log.get("need_manual_review")),
+            "llm_success_count": sum(1 for log in logs if log.get("llm_success")),
+            "llm_failed_count": sum(1 for log in logs if log.get("llm_used") and not log.get("llm_success")),
+            "output_file": output_file,
+        }
+    )
+    summary.update({"records": cleaned, "logs": logs, "field_evidence": field_evidence, "conflict_evidence": conflict_evidence})
+    return summary
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="从数据库读取文章内容并生成固定 26 列 Excel")
     parser.add_argument("--config", default="config/db_config.yml", help="数据库配置文件路径")
     parser.add_argument("--field-config", default="config/field_mapping.yml", help="字段配置文件路径")
+    parser.add_argument("--table-config", default="config/table_mapping.yml", help="表格字段映射配置文件路径")
     parser.add_argument("--output", default="outputs/result.xlsx", help="输出 Excel 路径")
     parser.add_argument("--keyword", default="", help="关键词/同义词扩展搜索词")
     parser.add_argument("--template", default="template/陕西西安.xlsx", help="Excel 模板路径")
     parser.add_argument("--llm-config", default="config/llm_config.yml", help="LLM 配置文件路径")
     llm_group = parser.add_mutually_exclusive_group()
-    llm_group.add_argument("--use-llm", action="store_true", help="启用规则 + DeepSeek 大模型融合提取")
+    llm_group.add_argument("--use-llm", action="store_true", help="启用规则 + DeepSeek 融合提取")
     llm_group.add_argument("--no-llm", action="store_true", help="强制禁用大模型，仅使用规则提取")
     return parser.parse_args()
 
@@ -104,6 +147,7 @@ def main() -> None:
         template_path=args.template,
         use_llm=force_llm,
         llm_config_path=args.llm_config,
+        table_mapping_path=args.table_config,
     )
     print(f"读取记录数: {summary['read_count']}")
     print(f"成功记录数: {summary['success_count']}")

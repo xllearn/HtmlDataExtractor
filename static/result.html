@@ -278,7 +278,9 @@
 
   <script>
     const columns = ["文章时间","审核日期","info_id","地区名称","个人账户计入办法","个人账户使用范围","病种名称","类型","标化类型","保险类型","人员类型","病种类型","就诊地域","医院类型","就诊情况","区间","起付标准","补助限额","报销比例","备注","相关资讯","审核状态0待审核1已审核","执行状态","开始执行时间","结束时间","是否需要手动修改执行状态(1是0否)"];
-    const logColumns = ["source_id", "info_id", "title", "status", "message", "records", "time", "llm_used", "llm_success", "need_manual_review", "review_reason"];
+    const logColumns = ["source_id", "info_id", "title", "status", "message", "records", "time", "llm_used", "llm_success", "llm_error", "need_manual_review", "review_reason", "table_count", "table_row_count", "extraction_mode"];
+    const evidenceColumns = ["source_id", "info_id", "row_index", "field", "value", "evidence", "confidence", "source", "rule_name"];
+    const conflictColumns = ["source_id", "info_id", "row_index", "field", "rule_value", "llm_value", "final_value", "reason"];
     const taskId = new URLSearchParams(window.location.search).get("task_id");
     const $ = (id) => document.getElementById(id);
 
@@ -365,11 +367,40 @@
         const name = document.createElement("b");
         name.textContent = label;
         const metric = document.createElement("span");
-        metric.textContent = value ?? "";
-        metric.title = value ?? "";
+        const safeValue = cls === "file" ? (value ?? "") : (value ?? 0);
+        metric.textContent = safeValue;
+        metric.title = safeValue;
         div.appendChild(name);
         div.appendChild(metric);
         $("summary").appendChild(div);
+      });
+    }
+
+    function renderModeSummary(logs) {
+      const counts = { table_html: 0, table_text: 0, key_value: 0, rule_llm_fusion: 0, llm_only: 0, manual_review: 0 };
+      (logs || []).forEach((log) => {
+        const mode = log.extraction_mode || "";
+        if (mode in counts) counts[mode] += 1;
+        if (log.need_manual_review) counts.manual_review += 1;
+      });
+      const items = [
+        ["HTML ?????", counts.table_html],
+        ["???????", counts.table_text],
+        ["key-value ?????", counts.key_value],
+        ["LLM ???", counts.rule_llm_fusion + counts.llm_only],
+        ["???????", counts.manual_review]
+      ];
+      $("modeSummary").innerHTML = "";
+      items.forEach(([label, value]) => {
+        const div = document.createElement("div");
+        div.className = "metric";
+        const name = document.createElement("b");
+        name.textContent = label;
+        const metric = document.createElement("span");
+        metric.textContent = value ?? 0;
+        div.appendChild(name);
+        div.appendChild(metric);
+        $("modeSummary").appendChild(div);
       });
     }
 
@@ -388,6 +419,9 @@
         const colgroup = `<colgroup>${columns.map((_, index) => `<col class="${index < 4 ? "col-wide" : "col-medium"}">`).join("")}</colgroup>`;
         renderTable("resultTable", result.data || [], columns, { colgroup });
         renderTable("logTable", result.logs || [], logColumns);
+        renderModeSummary(result.logs || []);
+        renderTable("evidenceTable", result.field_evidence || [], evidenceColumns);
+        renderTable("conflictTable", result.conflict_evidence || [], conflictColumns);
         $("downloadBtn").href = `/api/task/download/${taskId}`;
         $("downloadBtn").classList.remove("disabled");
         return;
@@ -403,6 +437,9 @@
     renderSummary({});
     renderTable("resultTable", [], columns);
     renderTable("logTable", [], logColumns);
+    renderModeSummary([]);
+    renderTable("evidenceTable", [], evidenceColumns);
+    renderTable("conflictTable", [], conflictColumns);
     poll();
   </script>
 </body>

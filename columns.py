@@ -28,3 +28,7 @@ TARGET_COLUMNS = [
 ]
 
 DATE_COLUMNS = ["文章时间", "审核日期", "开始执行时间", "结束时间"]
+
+BASE_COLUMNS = {"文章时间", "审核日期", "info_id", "地区名称", "相关资讯"}
+
+DEFAULT_ZERO_COLUMNS = {"审核状态0待审核1已审核", "是否需要手动修改执行状态(1是0否)"}

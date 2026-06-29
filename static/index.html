@@ -100,19 +100,19 @@
       font-size: 13px;
     }
     .toggle-row input { width: 16px; height: 16px; }
-    details.advanced {
+    .advanced {
       margin-top: 14px;
       border: 1px solid #e5eaf0;
       border-radius: 8px;
       background: #f8fafc;
     }
-    details.advanced summary {
+    .advanced summary {
       cursor: pointer;
       padding: 11px 13px;
       color: var(--primary);
       font-weight: 700;
     }
-    details.advanced .config-grid { padding: 0 13px 13px; }
+    .advanced .config-grid { padding: 0 13px 13px; }
     .field label {
       display: block;
       margin: 0 0 7px;
@@ -135,6 +135,21 @@
     input:focus, select:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(15, 95, 117, .14);
+    }
+
+    .readonly-path {
+      display: block;
+      min-height: 38px;
+      border: 1px solid #d6e0ea;
+      border-radius: 6px;
+      padding: 9px 10px;
+      background: #eef3f8;
+      color: #334155;
+      font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .toolbar {
       display: flex;
@@ -352,15 +367,20 @@
           <button class="btn btn-emphasis" id="startBtn">开始提取已选择数据</button>
           <span id="selectedCount" class="badge">已选择 0 条</span>
         </div>
-        <details class="advanced">
-          <summary>高级配置</summary>
-          <div class="config-grid">
-            <div class="field"><label for="configPath">数据库配置文件路径</label><input id="configPath" value="config/db_config.yml"></div>
-            <div class="field"><label for="fieldConfigPath">字段配置文件路径</label><input id="fieldConfigPath" value="config/field_mapping.yml"></div>
-            <div class="field"><label for="templatePath">Excel 模板路径</label><input id="templatePath" value="template/陕西西安.xlsx"></div>
-            <div class="field"><label for="llmConfigPath">LLM 配置文件路径</label><input id="llmConfigPath" value="config/llm_config.yml"></div>
+        <section class="advanced" aria-label="??????">
+          <div class="card-header" style="padding:11px 13px;min-height:auto;background:#f8fafc;">
+            <h3 class="card-title" style="font-size:14px;">??????</h3>
+            <span class="badge">config_key: default</span>
           </div>
-        </details>
+          <div class="config-grid" id="systemConfig" style="padding:13px;">
+            <div class="field"><label>?????</label><span class="readonly-path">config/db_config.yml</span></div>
+            <div class="field"><label>????</label><span class="readonly-path">config/field_mapping.yml</span></div>
+            <div class="field"><label>????</label><span class="readonly-path">config/table_mapping.yml</span></div>
+            <div class="field"><label>Excel ??</label><span class="readonly-path">template/????.xlsx</span></div>
+            <div class="field"><label>LLM ??</label><span class="readonly-path">config/llm_config.yml</span></div>
+            <div class="field"><label>????</label><span class="readonly-path">outputs/{task_id}/result.xlsx</span></div>
+          </div>
+        </section>
         <div id="status" class="alert" role="status"></div>
       </div>
     </section>
@@ -512,7 +532,7 @@
     async function loadRecords(nextPage = 1) {
       page = nextPage;
       const params = new URLSearchParams({
-        config_path: $("configPath").value.trim(),
+        config_key: "default",
         keyword: $("keyword").value.trim(),
         page: String(page),
         page_size: $("pageSize").value
@@ -553,10 +573,7 @@
         return;
       }
       const payload = {
-        config_path: $("configPath").value.trim(),
-        field_config_path: $("fieldConfigPath").value.trim(),
-        template_path: $("templatePath").value.trim(),
-        llm_config_path: $("llmConfigPath").value.trim(),
+        config_key: "default",
         use_llm: $("useLlm").checked,
         keyword: $("keyword").value.trim(),
         selected_ids: Array.from(selectedIds)

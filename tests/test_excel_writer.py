@@ -43,7 +43,7 @@ def test_excel_writer_outputs_fixed_columns_logs_and_evidence(tmp_path: Path):
     assert LOG_SHEET in wb.sheetnames
     assert EVIDENCE_SHEET in wb.sheetnames
     assert [cell.value for cell in wb[RESULT_SHEET][1]] == TARGET_COLUMNS
-    assert [cell.value for cell in wb[LOG_SHEET][1]][:11] == [
+    assert [cell.value for cell in wb[LOG_SHEET][1]][:15] == [
         "source_id",
         "info_id",
         "title",
@@ -53,12 +53,17 @@ def test_excel_writer_outputs_fixed_columns_logs_and_evidence(tmp_path: Path):
         "time",
         "llm_used",
         "llm_success",
+        "llm_error",
         "need_manual_review",
         "review_reason",
+        "table_count",
+        "table_row_count",
+        "extraction_mode",
     ]
     assert [cell.value for cell in wb[EVIDENCE_SHEET][1]] == [
         "source_id",
         "info_id",
+        "row_index",
         "field",
         "value",
         "evidence",
@@ -66,4 +71,4 @@ def test_excel_writer_outputs_fixed_columns_logs_and_evidence(tmp_path: Path):
         "source",
         "rule_name",
     ]
-    assert wb[EVIDENCE_SHEET]["C2"].value == "报销比例"
+    assert wb[EVIDENCE_SHEET]["D2"].value == "报销比例"
