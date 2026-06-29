@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>提取结果</title>
+  <style>
+    :root { --bg:#f4f6f8; --panel:#fff; --line:#d7dde5; --text:#1f2937; --muted:#64748b; --brand:#176b87; --ok:#0f766e; --bad:#b91c1c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { background:#12343f; color:#fff; padding:20px 28px; border-bottom:4px solid #e4b363; }
+    header h1 { margin:0; font-size:22px; }
+    main { padding:18px; max-width:1600px; margin:0 auto; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 20px rgba(15,23,42,.06); margin-bottom:16px; }
+    .panel h2 { margin:0; padding:13px 15px; font-size:16px; border-bottom:1px solid var(--line); }
+    .panel-body { padding:15px; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    a, button { border:0; border-radius:6px; padding:10px 14px; font-weight:700; min-height:38px; text-decoration:none; display:inline-flex; align-items:center; }
+    .primary { background:var(--brand); color:#fff; }
+    .download { background:var(--ok); color:#fff; }
+    .disabled { pointer-events:none; opacity:.45; }
+    .status { color:var(--muted); font-size:13px; min-height:20px; }
+    .status.error { color:var(--bad); }
+    .summary { display:grid; grid-template-columns:repeat(6,minmax(140px,1fr)); gap:10px; }
+    .summary div { background:#f8fafc; border:1px solid #e5e7eb; border-radius:6px; padding:10px; }
+    .summary b { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+    .table-wrap { overflow:auto; max-height:520px; border-top:1px solid var(--line); }
+    table { width:100%; min-width:1500px; border-collapse:collapse; font-size:12px; }
+    th, td { border-bottom:1px solid #e5e7eb; padding:8px 9px; text-align:left; vertical-align:top; }
+    th { background:#f8fafc; position:sticky; top:0; z-index:1; white-space:nowrap; }
+    @media (max-width:900px) { .summary { grid-template-columns:1fr 1fr; } main { padding:12px; } }
+  </style>
+</head>
+<body>
+  <header><h1>提取结果</h1></header>
+  <main>
+    <section class="panel">
+      <h2>任务状态</h2>
+      <div class="panel-body">
+        <div class="actions">
+          <a class="primary" href="/static/index.html">返回数据库列表</a>
+          <a id="downloadBtn" class="download disabled" href="#">下载 Excel</a>
+          <span id="status" class="status"></span>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>任务摘要</h2>
+      <div class="panel-body"><div id="summary" class="summary"></div></div>
+    </section>
+    <section class="panel">
+      <h2>固定 26 列结果</h2>
+      <div class="table-wrap"><table id="resultTable"></table></div>
+    </section>
+    <section class="panel">
+      <h2>采集日志</h2>
+      <div class="table-wrap"><table id="logTable"></table></div>
+    </section>
+  </main>
+  <script>
+    const columns = ["文章时间","审核日期","info_id","地区名称","个人账户计入办法","个人账户使用范围","病种名称","类型","标化类型","保险类型","人员类型","病种类型","就诊地域","医院类型","就诊情况","区间","起付标准","补助限额","报销比例","备注","相关资讯","审核状态0待审核1已审核","执行状态","开始执行时间","结束时间","是否需要手动修改执行状态(1是0否)"];
+    const logColumns = ["source_id", "info_id", "title", "status", "message", "records", "time"];
+    const taskId = new URLSearchParams(window.location.search).get("task_id");
+    const $ = (id) => document.getElementById(id);
+    function setStatus(text, error=false) { $("status").textContent = text; $("status").className = error ? "status error" : "status"; }
+    function renderTable(id, rows, headers) {
+      const table = $(id);
+      table.innerHTML = "";
+      const thead = document.createElement("thead");
+      const head = document.createElement("tr");
+      headers.forEach((header) => { const th = document.createElement("th"); th.textContent = header; head.appendChild(th); });
+      thead.appendChild(head);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        headers.forEach((header) => { const td = document.createElement("td"); td.textContent = row[header] ?? ""; tr.appendChild(td); });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+    }
+    function renderSummary(summary) {
+      const items = [
+        ["选择记录数", summary.selected_count],
+        ["提取成功数", summary.success_count],
+        ["失败数", summary.failed_count],
+        ["skipped_keyword 数", summary.skipped_count],
+        ["empty_content 数", summary.empty_count],
+        ["输出文件路径", summary.output_file]
+      ];
+      $("summary").innerHTML = "";
+      items.forEach(([label, value]) => {
+        const div = document.createElement("div");
+        div.innerHTML = `<b>${label}</b><span>${value ?? ""}</span>`;
+        $("summary").appendChild(div);
+      });
+    }
+    async function poll() {
+      if (!taskId) { setStatus("缺少 task_id", true); return; }
+      const statusRes = await fetch(`/api/task/status/${taskId}`);
+      const status = await statusRes.json();
+      setStatus(status.message || status.status, status.status === "failed");
+      if (status.status === "completed") {
+        const resultRes = await fetch(`/api/task/result/${taskId}`);
+        const result = await resultRes.json();
+        renderSummary(result.summary || {});
+        renderTable("resultTable", result.data || [], columns);
+        renderTable("logTable", result.logs || [], logColumns);
+        $("downloadBtn").href = `/api/task/download/${taskId}`;
+        $("downloadBtn").classList.remove("disabled");
+        return;
+      }
+      if (status.status === "failed") return;
+      setTimeout(poll, 1200);
+    }
+    renderTable("resultTable", [], columns);
+    renderTable("logTable", [], logColumns);
+    poll();
+  </script>
+</body>
+</html>

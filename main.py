@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from cleaner import clean_records, load_field_mapping
-from db_reader import load_db_config, read_records
+from db_reader import load_db_config, read_records, read_records_by_ids
 from excel_writer import write_excel
 from extractor import extract_record
 
@@ -14,11 +14,12 @@ def run_pipeline(
     output_path: str | Path = "outputs/result.xlsx",
     keyword: str = "",
     template_path: str | Path = "template/陕西西安.xlsx",
+    selected_ids: List[str] | None = None,
 ) -> Dict[str, Any]:
     db_config = load_db_config(config_path)
     field_mapping = load_field_mapping(field_config_path)
     try:
-        db_records = read_records(db_config)
+        db_records = read_records_by_ids(db_config, selected_ids) if selected_ids else read_records(db_config)
     except Exception as exc:
         raise RuntimeError(f"数据库查询失败: {exc}") from exc
 
@@ -45,6 +46,7 @@ def run_pipeline(
     output_file = write_excel(cleaned, logs, output_path, field_mapping.output_columns, template_path=template_path)
     return {
         "read_count": len(db_records),
+        "selected_count": len(selected_ids or []),
         "success_count": sum(1 for log in logs if log.get("status") == "success"),
         "failed_count": sum(1 for log in logs if log.get("status") == "failed"),
         "skipped_count": sum(1 for log in logs if log.get("status") == "skipped_keyword"),

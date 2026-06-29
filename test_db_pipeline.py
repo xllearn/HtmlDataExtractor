@@ -117,6 +117,80 @@ def test_db_reader_loads_dynamic_columns_from_sqlite(tmp_path: Path):
     assert "unused_column" not in record["raw"]
 
 
+def test_db_reader_pages_and_reads_selected_ids_with_direct_fields(tmp_path: Path):
+    from sqlalchemy import create_engine, text
+
+    from db_reader import load_db_config, read_record_page, read_records_by_ids
+
+    db_path = tmp_path / "articles.sqlite"
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE policy_article (
+                    article_id TEXT PRIMARY KEY,
+                    title TEXT,
+                    content TEXT,
+                    publish_time TEXT,
+                    region TEXT,
+                    insurancetypename TEXT
+                )
+                """
+            )
+        )
+        for idx in range(1, 4):
+            conn.execute(
+                text(
+                    "INSERT INTO policy_article "
+                    "(article_id, title, content, publish_time, region, insurancetypename) "
+                    "VALUES (:article_id, :title, :content, :publish_time, :region, :insurance)"
+                ),
+                {
+                    "article_id": f"A-{idx}",
+                    "title": f"西安医保政策{idx}",
+                    "content": "医保 类型：门诊 报销比例：70% 起付标准：200元 " + ("正文" * 80),
+                    "publish_time": f"2026-05-2{idx}",
+                    "region": "西安市",
+                    "insurance": "商业补充保险",
+                },
+            )
+
+    config_path = write_yaml(
+        tmp_path / "db.yml",
+        {
+            "database": {"url": f"sqlite:///{db_path}"},
+            "source": {
+                "table": "policy_article",
+                "id_column": "",
+                "info_id_column": "article_id",
+                "title_column": "title",
+                "html_column": "",
+                "text_column": "content",
+                "article_time_column": "publish_time",
+                "audit_time_column": "",
+                "region_column": "region",
+                "related_info_column": "",
+            },
+            "direct_field_columns": {"保险类型": "insurancetypename"},
+            "query": {"where": "", "limit": "", "order_by": "article_id ASC"},
+        },
+    )
+    config = load_db_config(config_path)
+
+    page = read_record_page(config, keyword="政策", page=2, page_size=1)
+    assert page["total"] == 3
+    assert len(page["records"]) == 1
+    assert page["records"][0]["source_id"] == "A-2"
+    assert "html" not in page["records"][0]
+    assert "text" not in page["records"][0]
+    assert len(page["records"][0]["content_preview"]) <= 200
+
+    selected = read_records_by_ids(config, ["A-3", "A-1"])
+    assert [item["source_id"] for item in selected] == ["A-1", "A-3"]
+    assert selected[0]["direct_fields"]["保险类型"] == "商业补充保险"
+
+
 def test_extractor_uses_db_fields_first_and_skips_keyword_misses(tmp_path: Path):
     from columns import TARGET_COLUMNS
     from extractor import extract_record
@@ -136,6 +210,7 @@ def test_extractor_uses_db_fields_first_and_skips_keyword_misses(tmp_path: Path)
         "audit_time": "2026-05-23",
         "region": "数据库地区",
         "related_info": "数据库来源",
+        "direct_fields": {"保险类型": "商业补充保险"},
         "raw": {},
     }
 
@@ -150,6 +225,7 @@ def test_extractor_uses_db_fields_first_and_skips_keyword_misses(tmp_path: Path)
     assert result["审核日期"] == "2026-05-23"
     assert result["地区名称"] == "数据库地区"
     assert result["相关资讯"] == "数据库来源"
+    assert result["保险类型"] == "商业补充保险"
     assert result["类型"] == "门诊统筹"
     assert result["报销比例"] == "70%"
     assert result["起付标准"] == "200元"
@@ -157,6 +233,17 @@ def test_extractor_uses_db_fields_first_and_skips_keyword_misses(tmp_path: Path)
     skipped, skipped_log = extract_record(record, TARGET_COLUMNS, keyword="完全不匹配")
     assert skipped == []
     assert skipped_log["status"] == "skipped_keyword"
+
+
+def test_key_value_fields_stop_at_next_field_name():
+    from columns import TARGET_COLUMNS
+    from extractor import key_value_fields
+
+    result = key_value_fields("类型：门诊 报销比例：70% 起付标准：200元", TARGET_COLUMNS)
+
+    assert result["类型"] == "门诊"
+    assert result["报销比例"] == "70%"
+    assert result["起付标准"] == "200元"
 
 
 def test_cleaner_fills_deduplicates_and_sorts(tmp_path: Path):
@@ -201,7 +288,41 @@ def test_excel_writer_outputs_only_fixed_columns_and_logs(tmp_path: Path):
     assert log_headers[:4] == ["source_id", "info_id", "title", "status"]
 
 
-def test_run_pipeline_and_api_sample(tmp_path: Path):
+def test_excel_writer_preserves_template_header_and_writes_from_second_row(tmp_path: Path):
+    from copy import copy
+
+    import openpyxl
+
+    from columns import TARGET_COLUMNS
+    from excel_writer import write_excel
+
+    template = tmp_path / "template.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "结果数据"
+    ws.freeze_panes = "A2"
+    ws.append(TARGET_COLUMNS)
+    for cell in ws[1]:
+        cell.font = copy(cell.font)
+        cell.font = openpyxl.styles.Font(bold=True, color="FF0000")
+    ws.append(["STYLE"] * len(TARGET_COLUMNS))
+    ws.column_dimensions["A"].width = 22
+    wb.save(template)
+
+    output = tmp_path / "templated.xlsx"
+    write_excel([{"info_id": "A-1", "文章时间": "2026-05-22"}], [], output, TARGET_COLUMNS, template_path=template)
+
+    out = openpyxl.load_workbook(output)
+    result = out["结果数据"]
+    assert [cell.value for cell in result[1]] == TARGET_COLUMNS
+    assert result["A1"].font.bold is True
+    assert result.freeze_panes == "A2"
+    assert result.column_dimensions["A"].width == 22
+    assert result["C2"].value == "A-1"
+    assert result.max_row == 2
+
+
+def test_run_pipeline_selected_ids_and_api_sample(tmp_path: Path):
     from sqlalchemy import create_engine, text
     from fastapi.testclient import TestClient
 
@@ -212,11 +333,17 @@ def test_run_pipeline_and_api_sample(tmp_path: Path):
     db_path = tmp_path / "pipeline.sqlite"
     engine = create_engine(f"sqlite:///{db_path}")
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE policy_article (id INTEGER PRIMARY KEY, title TEXT, content TEXT, publish_time TEXT, region TEXT)"))
+        conn.execute(text("CREATE TABLE policy_article (article_id TEXT PRIMARY KEY, title TEXT, content TEXT, publish_time TEXT, region TEXT)"))
         conn.execute(
             text(
-                "INSERT INTO policy_article (id, title, content, publish_time, region) "
-                "VALUES (1, '示例政策', '医保 类型：门诊 报销比例：70%', '2026-05-22', '西安市')"
+                "INSERT INTO policy_article (article_id, title, content, publish_time, region) "
+                "VALUES ('A-1', '示例政策1', '医保 类型：门诊 报销比例：70%', '2026-05-22', '西安市')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO policy_article (article_id, title, content, publish_time, region) "
+                "VALUES ('A-2', '示例政策2', '医保 类型：住院 报销比例：80%', '2026-05-23', '西安市')"
             )
         )
 
@@ -226,8 +353,8 @@ def test_run_pipeline_and_api_sample(tmp_path: Path):
             "database": {"url": f"sqlite:///{db_path}"},
             "source": {
                 "table": "policy_article",
-                "id_column": "id",
-                "info_id_column": "",
+                "id_column": "",
+                "info_id_column": "article_id",
                 "title_column": "title",
                 "html_column": "",
                 "text_column": "content",
@@ -236,19 +363,21 @@ def test_run_pipeline_and_api_sample(tmp_path: Path):
                 "region_column": "region",
                 "related_info_column": "",
             },
-            "query": {"where": "", "limit": 10, "order_by": "id ASC"},
+            "query": {"where": "", "limit": 10, "order_by": "article_id ASC"},
         },
     )
     output = tmp_path / "out.xlsx"
-    summary = run_pipeline(db_config, field_config(tmp_path / "fields.yml"), output, keyword="医保", template_path="")
+    summary = run_pipeline(db_config, field_config(tmp_path / "fields.yml"), output, keyword="医保", template_path="", selected_ids=["A-2"])
 
     assert summary["read_count"] == 1
+    assert summary["selected_count"] == 1
     assert summary["success_count"] == 1
     assert summary["failed_count"] == 0
     assert Path(summary["output_file"]).exists()
     df = pd.read_excel(output, sheet_name="结果数据")
     assert list(df.columns) == TARGET_COLUMNS
     assert len(df) == 1
+    assert df.iloc[0]["info_id"] == "A-2"
 
     client = TestClient(app)
     response = client.get("/api/sample")
@@ -256,3 +385,17 @@ def test_run_pipeline_and_api_sample(tmp_path: Path):
     sample = response.json()
     assert sample["record"]["source_id"]
     assert list(sample["result"].keys()) == TARGET_COLUMNS
+    assert sample["sample_matched"] is True
+    assert sample["diff_fields"] == []
+
+
+def test_api_db_records_and_start_selected_validation(tmp_path: Path):
+    from fastapi.testclient import TestClient
+
+    from app import app
+
+    client = TestClient(app)
+    response = client.post("/api/task/start-selected", json={"selected_ids": []})
+
+    assert response.status_code == 400
+    assert "请至少选择一条数据" in response.text

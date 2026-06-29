@@ -109,7 +109,10 @@ def db_base_fields(record: Dict[str, Any], columns: Sequence[str]) -> Dict[str, 
     base["审核日期"] = normalize_date(record.get("audit_time"))
     base["地区名称"] = clean_text(record.get("region"))
     base["相关资讯"] = clean_text(record.get("related_info"))
-    if clean_text(record.get("raw", {}).get("insurancetypename")):
+    for column, value in (record.get("direct_fields") or {}).items():
+        if column in columns and not clean_text(base.get(column)):
+            base[column] = clean_text(value)
+    if not clean_text(base.get("保险类型")) and clean_text(record.get("raw", {}).get("insurancetypename")):
         base["保险类型"] = clean_text(record.get("raw", {}).get("insurancetypename"))
     return base
 
@@ -140,18 +143,26 @@ def table_records(html: str, base: Dict[str, str], columns: Sequence[str]) -> Li
 def key_value_fields(text: str, columns: Sequence[str]) -> Dict[str, str]:
     found = blank_record(columns)
     compact = clean_text(text)
+    candidates: List[Tuple[str, str]] = []
     for raw_key, target in HEADER_ALIASES.items():
+        if target in columns:
+            candidates.append((raw_key, target))
+    for target in columns:
+        candidates.append((target, target))
+    candidates.sort(key=lambda item: len(item[0]), reverse=True)
+    key_pattern = "|".join(re.escape(key) for key, _ in candidates)
+    target_by_key = {key: target for key, target in candidates}
+    matches = list(re.finditer(rf"(?P<key>{key_pattern})\s*[:：]", compact))
+    for index, match in enumerate(matches):
+        raw_key = match.group("key")
+        target = target_by_key.get(raw_key)
         if target not in columns:
             continue
-        pattern = rf"{re.escape(raw_key)}\s*[:：]\s*([^:：；;，,\n\r]+)"
-        match = re.search(pattern, compact)
-        if match:
-            found[target] = clean_text(match.group(1))
-    for target in columns:
-        pattern = rf"{re.escape(target)}\s*[:：]\s*([^:：；;，,\n\r]+)"
-        match = re.search(pattern, compact)
-        if match:
-            found[target] = clean_text(match.group(1))
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(compact)
+        value = compact[start:end].strip(" \t\r\n,，;；")
+        if value:
+            found[target] = clean_text(value)
     return found
 
 

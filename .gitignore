@@ -26,6 +26,8 @@ sample.html
 sample_policy.html
 *.xlsx
 *.xls
+!template/
+!template/*.xlsx
 
 .pytest_cache/
 .mypy_cache/

@@ -1,3 +1,4 @@
+from copy import copy
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
@@ -22,11 +23,48 @@ def clear_sheet(sheet) -> None:
         sheet.delete_rows(1, sheet.max_row)
 
 
-def write_rows(sheet, headers: Sequence[str], rows: Iterable[Dict[str, Any]]) -> None:
+def clear_data_rows(sheet) -> None:
+    if sheet.max_row > 1:
+        sheet.delete_rows(2, sheet.max_row - 1)
+
+
+def copy_row_style(sheet, source_row: int, target_row: int, column_count: int) -> None:
+    for col in range(1, column_count + 1):
+        source = sheet.cell(source_row, col)
+        target = sheet.cell(target_row, col)
+        if source.has_style:
+            target._style = copy(source._style)
+        if source.number_format:
+            target.number_format = source.number_format
+        if source.alignment:
+            target.alignment = copy(source.alignment)
+        if source.border:
+            target.border = copy(source.border)
+        if source.fill:
+            target.fill = copy(source.fill)
+        if source.font:
+            target.font = copy(source.font)
+
+
+def write_plain_rows(sheet, headers: Sequence[str], rows: Iterable[Dict[str, Any]]) -> None:
     clear_sheet(sheet)
     sheet.append(list(headers))
     for row in rows:
         sheet.append([row.get(header, "") for header in headers])
+
+
+def write_template_result_rows(sheet, headers: Sequence[str], rows: Iterable[Dict[str, Any]]) -> None:
+    if sheet.max_row < 1:
+        sheet.append(list(headers))
+    else:
+        for index, header in enumerate(headers, start=1):
+            sheet.cell(1, index).value = header
+    style_source_row = 2 if sheet.max_row >= 2 else 1
+    clear_data_rows(sheet)
+    for row_index, row in enumerate(rows, start=2):
+        copy_row_style(sheet, style_source_row, row_index, len(headers))
+        for col_index, header in enumerate(headers, start=1):
+            sheet.cell(row_index, col_index).value = row.get(header, "")
 
 
 def write_excel(
@@ -40,19 +78,25 @@ def write_excel(
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     template = Path(template_path) if template_path else None
-    if template and template.exists():
+    use_template = bool(template and template.exists())
+    if use_template:
         workbook = load_workbook(template)
     else:
         workbook = Workbook()
         workbook.remove(workbook.active)
+
     result_sheet = ensure_sheet(workbook, RESULT_SHEET)
     log_sheet = ensure_sheet(workbook, LOG_SHEET)
-    write_rows(result_sheet, columns, records)
+    if use_template:
+        write_template_result_rows(result_sheet, columns, records)
+    else:
+        write_plain_rows(result_sheet, columns, records)
+
     prepared_logs = []
     for log in logs:
         item = dict(log)
         item.setdefault("time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         prepared_logs.append(item)
-    write_rows(log_sheet, LOG_COLUMNS, prepared_logs)
+    write_plain_rows(log_sheet, LOG_COLUMNS, prepared_logs)
     workbook.save(output_path)
     return str(output_path)
