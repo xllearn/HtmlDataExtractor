@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import yaml
-from sqlalchemy import MetaData, bindparam, create_engine, select, text
+from sqlalchemy import MetaData, String, bindparam, cast, create_engine, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from columns import TARGET_COLUMNS
@@ -112,13 +112,46 @@ def _selected_columns(config: DatabaseConfig, table) -> Tuple[List[Any], Dict[st
 
 def _base_statement(config: DatabaseConfig, table, selected: List[Any]):
     statement = select(*selected)
+    for condition in _configured_conditions(config):
+        statement = statement.where(condition)
+    return _apply_order_by(statement, config)
+
+
+def _configured_conditions(config: DatabaseConfig) -> List[Any]:
+    conditions = []
     where_clause = str(config.query.get("where") or "").strip()
     if where_clause:
-        statement = statement.where(text(where_clause))
+        conditions.append(text(where_clause))
+    return conditions
+
+
+def _apply_order_by(statement, config: DatabaseConfig):
     order_by = str(config.query.get("order_by") or "").strip()
     if order_by:
         statement = statement.order_by(text(order_by))
     return statement
+
+
+def _query_limit(config: DatabaseConfig) -> int | None:
+    limit = config.query.get("limit")
+    if limit in (None, ""):
+        return None
+    return max(int(limit), 0)
+
+
+def _keyword_conditions(keyword: str, table, labels: Dict[str, str]) -> Tuple[List[Any], Dict[str, str]]:
+    keyword = clean_text(keyword)
+    if not keyword:
+        return [], {}
+
+    columns = []
+    for standard_key in ("title", "text", "html", "info_id", "region", "related_info"):
+        column_name = labels.get(standard_key)
+        if column_name and column_name in table.c:
+            columns.append(cast(table.c[column_name], String).like(bindparam("keyword_like")))
+    if not columns:
+        return [], {}
+    return [or_(*columns)], {"keyword_like": f"%{keyword}%"}
 
 
 def _to_standard(row: Dict[str, Any], labels: Dict[str, str], fallback_index: int = 0) -> Dict[str, Any]:
@@ -162,9 +195,9 @@ def read_records(config: DatabaseConfig) -> List[Dict[str, Any]]:
     engine, table = _table(config)
     selected, labels = _selected_columns(config, table)
     statement = _base_statement(config, table, selected)
-    limit = config.query.get("limit")
-    if limit not in (None, ""):
-        statement = statement.limit(int(limit))
+    limit = _query_limit(config)
+    if limit is not None:
+        statement = statement.limit(limit)
 
     records: List[Dict[str, Any]] = []
     try:
@@ -179,10 +212,38 @@ def read_records(config: DatabaseConfig) -> List[Dict[str, Any]]:
 def read_record_page(config: DatabaseConfig, keyword: str = "", page: int = 1, page_size: int = 20) -> Dict[str, Any]:
     page = max(int(page or 1), 1)
     page_size = max(min(int(page_size or 20), 100), 1)
-    all_records = [record for record in read_records(config) if _matches_keyword(record, keyword)]
-    total = len(all_records)
-    start = (page - 1) * page_size
-    page_records = all_records[start : start + page_size]
+    engine, table = _table(config)
+    selected, labels = _selected_columns(config, table)
+    keyword_filters, keyword_params = _keyword_conditions(keyword, table, labels)
+    conditions = _configured_conditions(config) + keyword_filters
+    configured_limit = _query_limit(config)
+    offset = (page - 1) * page_size
+
+    count_statement = select(func.count()).select_from(table)
+    for condition in conditions:
+        count_statement = count_statement.where(condition)
+
+    statement = select(*selected)
+    for condition in conditions:
+        statement = statement.where(condition)
+    statement = _apply_order_by(statement, config)
+
+    try:
+        with engine.connect() as conn:
+            total = int(conn.execute(count_statement, keyword_params).scalar_one() or 0)
+            if configured_limit is not None:
+                total = min(total, configured_limit)
+            if configured_limit is not None and offset >= configured_limit:
+                page_records = []
+            else:
+                effective_limit = page_size
+                if configured_limit is not None:
+                    effective_limit = min(page_size, configured_limit - offset)
+                rows = conn.execute(statement.limit(effective_limit).offset(offset), keyword_params).mappings()
+                page_records = [_to_standard(dict(row), labels, index + offset) for index, row in enumerate(rows, start=1)]
+    except SQLAlchemyError as exc:
+        raise RuntimeError(f"Database page query failed: {exc}") from exc
+
     return {
         "total": total,
         "records": [

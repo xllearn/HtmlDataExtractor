@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cleaner import fill_missing_by_field, load_field_mapping
 from columns import TARGET_COLUMNS
@@ -32,7 +32,7 @@ class PipelineRequest(BaseModel):
 
 
 class SelectedPipelineRequest(PipelineRequest):
-    selected_ids: List[str] = []
+    selected_ids: List[str] = Field(default_factory=list)
 
 
 class TaskStartResponse(BaseModel):

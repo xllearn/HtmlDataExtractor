@@ -61,6 +61,12 @@ source:
   related_info_column: "Source"
 ```
 
+`selected_ids` 稳定性说明：
+
+- 推荐配置真实唯一主键 `id_column`，用于前端勾选、翻页后保持选择，以及后端按选中记录精确读取。
+- 如果 `id_column` 为空，则 `info_id_column` 必须唯一；此时系统会用 `info_id_column` 作为 `source_id`。
+- 前端 `selected_ids` 不能使用分页行号，因为分页、搜索或排序变化后行号不稳定。
+
 运行前设置环境变量。密码中的 `#`、`@`、`:`、`/` 等 URL 特殊字符需要 URL 编码，例如 `#` 写成 `%23`。
 
 ```powershell

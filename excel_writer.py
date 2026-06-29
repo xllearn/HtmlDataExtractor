@@ -46,6 +46,43 @@ def copy_row_style(sheet, source_row: int, target_row: int, column_count: int) -
             target.font = copy(source.font)
 
 
+def snapshot_row_style(sheet, source_row: int, column_count: int) -> list[Dict[str, Any]]:
+    styles = []
+    for col in range(1, column_count + 1):
+        source = sheet.cell(source_row, col)
+        styles.append(
+            {
+                "style": copy(source._style) if source.has_style else None,
+                "number_format": source.number_format,
+                "alignment": copy(source.alignment) if source.alignment else None,
+                "border": copy(source.border) if source.border else None,
+                "fill": copy(source.fill) if source.fill else None,
+                "font": copy(source.font) if source.font else None,
+            }
+        )
+    return styles
+
+
+def apply_row_style(target, style: Dict[str, Any]) -> None:
+    if style["style"] is not None:
+        target._style = copy(style["style"])
+    if style["number_format"]:
+        target.number_format = style["number_format"]
+    if style["alignment"]:
+        target.alignment = copy(style["alignment"])
+    if style["border"]:
+        target.border = copy(style["border"])
+    if style["fill"]:
+        target.fill = copy(style["fill"])
+    if style["font"]:
+        target.font = copy(style["font"])
+
+
+def apply_cached_row_style(sheet, styles: Sequence[Dict[str, Any]], target_row: int) -> None:
+    for col, style in enumerate(styles, start=1):
+        apply_row_style(sheet.cell(target_row, col), style)
+
+
 def write_plain_rows(sheet, headers: Sequence[str], rows: Iterable[Dict[str, Any]]) -> None:
     clear_sheet(sheet)
     sheet.append(list(headers))
@@ -60,9 +97,10 @@ def write_template_result_rows(sheet, headers: Sequence[str], rows: Iterable[Dic
         for index, header in enumerate(headers, start=1):
             sheet.cell(1, index).value = header
     style_source_row = 2 if sheet.max_row >= 2 else 1
+    data_row_styles = snapshot_row_style(sheet, style_source_row, len(headers))
     clear_data_rows(sheet)
     for row_index, row in enumerate(rows, start=2):
-        copy_row_style(sheet, style_source_row, row_index, len(headers))
+        apply_cached_row_style(sheet, data_row_styles, row_index)
         for col_index, header in enumerate(headers, start=1):
             sheet.cell(row_index, col_index).value = row.get(header, "")
 

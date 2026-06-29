@@ -191,6 +191,87 @@ def test_db_reader_pages_and_reads_selected_ids_with_direct_fields(tmp_path: Pat
     assert selected[0]["direct_fields"]["保险类型"] == "商业补充保险"
 
 
+def test_db_reader_page_uses_database_limit_offset_and_keyword_where(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from sqlalchemy import create_engine, text
+
+    import db_reader
+    from db_reader import load_db_config, read_record_page
+
+    db_path = tmp_path / "paged.sqlite"
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE policy_article (
+                    article_id TEXT PRIMARY KEY,
+                    title TEXT,
+                    html_content TEXT,
+                    content TEXT,
+                    publish_time TEXT,
+                    region TEXT,
+                    related_info TEXT
+                )
+                """
+            )
+        )
+        rows = [
+            ("A-1", "普通通知", "<p>无关键词</p>", "普通正文", "2026-05-21", "西安市", "来源A"),
+            ("A-2", "医保政策", "<p>普通 HTML</p>", "正文2", "2026-05-22", "西安市", "来源B"),
+            ("A-3", "普通标题", "<p>商业补充保险 HTML</p>", "正文3", "2026-05-23", "宝鸡市", "来源C"),
+            ("A-4", "普通标题", "<p>普通 HTML</p>", "正文4", "2026-05-24", "商洛市", "医保来源"),
+        ]
+        for row in rows:
+            conn.execute(
+                text(
+                    "INSERT INTO policy_article "
+                    "(article_id, title, html_content, content, publish_time, region, related_info) "
+                    "VALUES (:article_id, :title, :html_content, :content, :publish_time, :region, :related_info)"
+                ),
+                {
+                    "article_id": row[0],
+                    "title": row[1],
+                    "html_content": row[2],
+                    "content": row[3],
+                    "publish_time": row[4],
+                    "region": row[5],
+                    "related_info": row[6],
+                },
+            )
+
+    config_path = write_yaml(
+        tmp_path / "db.yml",
+        {
+            "database": {"url": f"sqlite:///{db_path}"},
+            "source": {
+                "table": "policy_article",
+                "id_column": "",
+                "info_id_column": "article_id",
+                "title_column": "title",
+                "html_column": "html_content",
+                "text_column": "content",
+                "article_time_column": "publish_time",
+                "audit_time_column": "",
+                "region_column": "region",
+                "related_info_column": "related_info",
+            },
+            "query": {"where": "", "limit": "", "order_by": "article_id ASC"},
+        },
+    )
+    config = load_db_config(config_path)
+    monkeypatch.setattr(db_reader, "read_records", lambda *_args, **_kwargs: pytest.fail("read_record_page must not full-read records"))
+
+    first_page = read_record_page(config, keyword="医保", page=1, page_size=1)
+    second_page = read_record_page(config, keyword="医保", page=2, page_size=1)
+
+    assert first_page["total"] == 2
+    assert [record["source_id"] for record in first_page["records"]] == ["A-2"]
+    assert [record["source_id"] for record in second_page["records"]] == ["A-4"]
+    assert "text" not in first_page["records"][0]
+    assert "html" not in first_page["records"][0]
+    assert first_page["records"][0]["content_preview"] == "正文2"
+
+
 def test_extractor_uses_db_fields_first_and_skips_keyword_misses(tmp_path: Path):
     from columns import TARGET_COLUMNS
     from extractor import extract_record
@@ -306,6 +387,11 @@ def test_excel_writer_preserves_template_header_and_writes_from_second_row(tmp_p
         cell.font = copy(cell.font)
         cell.font = openpyxl.styles.Font(bold=True, color="FF0000")
     ws.append(["STYLE"] * len(TARGET_COLUMNS))
+    for cell in ws[2]:
+        cell.fill = openpyxl.styles.PatternFill("solid", fgColor="FFF2CC")
+        cell.font = openpyxl.styles.Font(italic=True, color="00AA00")
+        cell.alignment = openpyxl.styles.Alignment(horizontal="center")
+        cell.number_format = "@"
     ws.column_dimensions["A"].width = 22
     wb.save(template)
 
@@ -319,6 +405,11 @@ def test_excel_writer_preserves_template_header_and_writes_from_second_row(tmp_p
     assert result.freeze_panes == "A2"
     assert result.column_dimensions["A"].width == 22
     assert result["C2"].value == "A-1"
+    assert result["C2"].fill.fgColor.rgb == "00FFF2CC"
+    assert result["C2"].font.italic is True
+    assert result["C2"].font.color.rgb == "0000AA00"
+    assert result["C2"].alignment.horizontal == "center"
+    assert result["C2"].number_format == "@"
     assert result.max_row == 2
 
 
@@ -399,3 +490,23 @@ def test_api_db_records_and_start_selected_validation(tmp_path: Path):
 
     assert response.status_code == 400
     assert "请至少选择一条数据" in response.text
+
+
+def test_selected_pipeline_request_uses_default_factory_for_selected_ids():
+    from app import SelectedPipelineRequest
+
+    field = SelectedPipelineRequest.model_fields["selected_ids"]
+    first = SelectedPipelineRequest()
+    second = SelectedPipelineRequest()
+    first.selected_ids.append("A-1")
+
+    assert field.default_factory is list
+    assert second.selected_ids == []
+
+
+def test_readme_documents_selected_id_stability():
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "推荐配置真实唯一主键 `id_column`" in readme
+    assert "如果 `id_column` 为空，则 `info_id_column` 必须唯一" in readme
+    assert "前端 `selected_ids` 不能使用分页行号" in readme
